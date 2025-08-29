@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>感じ方推定観光客数グラフ</title>
+    <title>インタラクティブ3Dデータグラフ</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
@@ -177,7 +177,7 @@
             <summary>表示設定</summary>
             <div>
                 <label for="opacity-slider">グラフ透明度</label>
-                <input type="range" id="opacity-slider" min="0.01" max="0.8" step="0.01" value="0.35">
+                <input type="range" id="opacity-slider" min="0.01" max="1.0" step="0.01" value="0.5">
             </div>
         </details>
     </div>
@@ -508,8 +508,8 @@
 
             const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.9);
             scene.add(hemisphereLight);
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
-            directionalLight.position.set(1, 1, 1).normalize();
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(1000, 2000, 1500);
             scene.add(directionalLight);
 
             raycaster = new THREE.Raycaster();
@@ -549,10 +549,10 @@
             const maxZ = processedData.length > 0 ? Math.max(...processedData.map(d => d.z)) : 20; // データがない場合はデフォルトで20
             const displayMaxZ = Math.ceil(maxZ / 5) * 5; // 5の倍数に切り上げる
             
-            const graphSizeX = 750 * 3; // X軸の間隔を2倍に
-            const graphSizeZ = 750 * 5; // X:Yが1:3になるように
-            const graphHeight = 600; // グラフの高さを上げる
-            const barWidth = 100; // 棒グラフの底面を小さくする
+            const graphSizeX = 750 * 3; 
+            const graphSizeZ = 750 * 5; 
+            const graphHeight = 600; 
+            const barWidth = 100;
 
             // 主グリッド線 (Y軸は6分割=2000刻み)
             const mainGrid = createCustomGrid(graphSizeX, graphSizeZ, AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN, 6);
@@ -577,16 +577,18 @@
             const barColor = new THREE.Color(0x0077b6);
 
             data.forEach(d => {
-                const barHeight = (d.z / displayMaxZ) * graphHeight; // maxZからdisplayMaxZに変更
+                const barHeight = (d.z / displayMaxZ) * graphHeight;
                 if (barHeight <= 0) return;
 
                 const geometry = new THREE.BoxGeometry(barWidth, barHeight, barWidth);
-                const material = new THREE.MeshLambertMaterial({ 
+                
+                const material = new THREE.MeshBasicMaterial({ 
                     color: barColor,
                     transparent: true,
                     opacity: baseOpacity,
                     depthWrite: false
                 });
+
                 const bar = new THREE.Mesh(geometry, material);
 
                 const posX = ((d.x - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * graphSizeX - graphSizeX / 2;
@@ -628,7 +630,7 @@
             for (let i = AXIS_CONFIG.X.MIN; i <= AXIS_CONFIG.X.MAX; i++) {
                 const xPos = ((i - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * sizeX - sizeX / 2;
                 const tickLabel = createTextSprite(i.toString(), {fontsize: 56, ...tickColor});
-                tickLabel.position.set(xPos, 0, sizeZ / 2 + 20); // Y位置を-25から0に修正
+                tickLabel.position.set(xPos, 0, sizeZ / 2 + 20); 
                 graphGroup.add(tickLabel);
             }
 
@@ -642,7 +644,7 @@
                 const zPos = ((value - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * sizeZ - sizeZ / 2;
                 const tickLabel = createTextSprite(Math.round(value).toString(), {fontsize: 56, ...tickColor});
                 const xOffset = sizeX / 2 + 20;
-                tickLabel.position.set(xOffset, 0, zPos); // Y位置を-25から0に修正
+                tickLabel.position.set(xOffset, 0, zPos);
                 tickLabel.rotation.y = -Math.PI / 2;
                 graphGroup.add(tickLabel);
             }
@@ -674,8 +676,7 @@
                             const posZ = ((yVal - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * sizeZ - sizeZ / 2;
 
                             const tickLabel = createTextSprite(yVal.toString(), { fontsize: 48, textColor: tickColor });
-                            // Y posisiionを少し持ち上げて、グリッド線と重ならないようにする
-                            tickLabel.position.set(posX, 0, posZ); // Y位置を5から0に修正
+                            tickLabel.position.set(posX, 0, posZ);
                             graphGroup.add(tickLabel);
                         }
                     });
@@ -735,8 +736,4 @@
     </script>
 </body>
 </html>
-
-
-
-
 
