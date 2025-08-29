@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>インタラクティブ3Dデータグラフ</title>
+    <title>感じ方推定観光客数グラフ</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
@@ -150,7 +150,7 @@
         </details>
 
         <details>
-            <summary>気象データフィルター</summary>
+            <summary>気象データ</summary>
             <div>
                 <label for="precipitation-filter">合計降水量 (mm)</label>
                 <div class="range-filter">
@@ -202,9 +202,9 @@
 
         // --- グラフの固定スケール定義 ---
         const AXIS_CONFIG = {
-            X: { MIN: 1, MAX: 5, LABEL: '数値 (X)' },
-            Y: { MIN: 0, MAX: 12000, LABEL: '人数推計 (Y)' },
-            Z: { LABEL: '回答数 (Z)' }
+            X: { MIN: 1, MAX: 5, LABEL: '回答' },
+            Y: { MIN: 0, MAX: 12000, LABEL: '推定観光客数' },
+            Z: { LABEL: '回答数' }
         };
 
         // --- ユーティリティ関数 ---
@@ -627,7 +627,7 @@
 
             for (let i = AXIS_CONFIG.X.MIN; i <= AXIS_CONFIG.X.MAX; i++) {
                 const xPos = ((i - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * sizeX - sizeX / 2;
-                const tickLabel = createTextSprite(i.toString(), {fontsize: 28, ...tickColor});
+                const tickLabel = createTextSprite(i.toString(), {fontsize: 56, ...tickColor});
                 tickLabel.position.set(xPos, 0, sizeZ / 2 + 20); // Y位置を-25から0に修正
                 graphGroup.add(tickLabel);
             }
@@ -640,7 +640,7 @@
             for (let i = 0; i <= 6; i++) {
                 const value = AXIS_CONFIG.Y.MIN + (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN) * (i / 6);
                 const zPos = ((value - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * sizeZ - sizeZ / 2;
-                const tickLabel = createTextSprite(Math.round(value).toString(), {fontsize: 28, ...tickColor});
+                const tickLabel = createTextSprite(Math.round(value).toString(), {fontsize: 56, ...tickColor});
                 const xOffset = sizeX / 2 + 20;
                 tickLabel.position.set(xOffset, 0, zPos); // Y位置を-25から0に修正
                 tickLabel.rotation.y = -Math.PI / 2;
@@ -652,7 +652,7 @@
             for (let value = 5; value <= displayMaxZ; value += 5) {
                 if (displayMaxZ > 0) {
                     const yPos = (value / displayMaxZ) * sizeY;
-                    const tickLabel = createTextSprite(value.toString(), {fontsize: 28, ...tickColor});
+                    const tickLabel = createTextSprite(value.toString(), {fontsize: 56, ...tickColor});
                     tickLabel.position.set(-sizeX / 2 - 45, yPos, 0);
                     graphGroup.add(tickLabel);
                 }
@@ -673,7 +673,7 @@
                             const posX = ((xVal - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * sizeX - sizeX / 2;
                             const posZ = ((yVal - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * sizeZ - sizeZ / 2;
 
-                            const tickLabel = createTextSprite(yVal.toString(), { fontsize: 24, textColor: tickColor });
+                            const tickLabel = createTextSprite(yVal.toString(), { fontsize: 48, textColor: tickColor });
                             // Y posisiionを少し持ち上げて、グリッド線と重ならないようにする
                             tickLabel.position.set(posX, 0, posZ); // Y位置を5から0に修正
                             graphGroup.add(tickLabel);
@@ -719,7 +719,7 @@
                     const d = intersected.userData;
                     const datesString = d.dates.slice(0, 10).join('\n') + (d.dates.length > 10 ? '\n...' : '');
                     tooltip.style.display = 'block';
-                    tooltip.innerHTML = `数値 (X): ${d.x}<br>人数推計 (Y): ${d.y}<br>回答数 (Z): ${d.z}<br>日付:<br>${datesString}`;
+                    tooltip.innerHTML = `回答: ${d.x}<br>推定観光客数: ${d.y}<br>回答数: ${d.z}<br>日付:<br>${datesString}`;
                 }
             } else {
                 if (intersected) {
@@ -735,6 +735,7 @@
     </script>
 </body>
 </html>
+
 
 
 
