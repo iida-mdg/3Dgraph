@@ -47,6 +47,34 @@
             max-width: 220px;
             max-height: 95vh;
             overflow-y: auto;
+            z-index: 10;
+        }
+        #color-legend {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background-color: rgba(255, 255, 255, 0.95);
+            padding: 10px 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            display: none;
+            font-size: 12px;
+            z-index: 10;
+        }
+        #color-legend .legend-title {
+            font-weight: 700;
+            margin-bottom: 5px;
+            text-align: center;
+        }
+        #color-legend .legend-gradient {
+            width: 150px;
+            height: 20px;
+            border-radius: 4px;
+        }
+        #color-legend .legend-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 2px;
         }
         #controls label {
             display: block;
@@ -244,6 +272,7 @@
     </div>
     <div id="container"></div>
     <div id="tooltip"></div>
+    <div id="color-legend"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -529,11 +558,10 @@
             camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 1, 50000);
             camera.position.set(0, 1800, 6000);
 
-            const aspect = container.clientWidth / container.clientHeight;
-            const frustumSize = graphSizeZ; 
-            orthoCamera = new THREE.OrthographicCamera(frustumSize * aspect / -2, frustumSize * aspect / 2, frustumSize / 2, frustumSize / -2, 1, 50000);
+            orthoCamera = new THREE.OrthographicCamera(1, 1, 1, 1, 1, 50000);
             orthoCamera.position.y = 2000;
-            orthoCamera.lookAt(scene.position); // カメラが中心を向くように修正
+            orthoCamera.lookAt(scene.position);
+            scene.add(orthoCamera);
 
             renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
             renderer.setSize(container.clientWidth, container.clientHeight);
@@ -555,6 +583,7 @@
             
             window.addEventListener('resize', onWindowResize, false);
             document.addEventListener('mousemove', onMouseMove, false);
+            onWindowResize(); // 初期設定
         }
         
         function createCustomGrid(sizeX, sizeZ, divisionsX, divisionsZ, color = 0xcccccc) {
@@ -572,6 +601,8 @@
             while(graphGroup.children.length > 0) { graphGroup.remove(graphGroup.children[0]); }
             const is2DMode = document.getElementById('view-mode-toggle').checked;
             
+            document.getElementById('color-legend').style.display = is2DMode ? 'block' : 'none';
+
             if (is2DMode) {
                 draw2DHeatmap(data);
             } else {
@@ -632,14 +663,17 @@
             const maxZ = processedData.length > 0 ? Math.max(...processedData.map(d => d.z)) : 20;
             const displayMaxZ = Math.ceil(maxZ / 5) * 5;
             
-            const mainGrid = createCustomGrid(graphSizeX, graphSizeZ, AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN, 6);
+            // 90度回転させるため、グリッドのサイズと分割数を入れ替える
+            const mainGrid = createCustomGrid(graphSizeZ, graphSizeX, 6, AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN);
             graphGroup.add(mainGrid);
-            const subGrid = createCustomGrid(graphSizeX, graphSizeZ, 0, 12, 0xe0e0e0);
+            const subGrid = createCustomGrid(graphSizeZ, graphSizeX, 12, 0, 0xe0e0e0);
             graphGroup.add(subGrid);
+
+            updateColorLegend(displayMaxZ);
 
             if (data.length === 0) {
                 showErrorMessage("表示するデータがありません");
-                createAxesAndTicks2D(graphSizeX, graphSizeZ);
+                createAxesAndTicks2D(graphSizeZ, graphSizeX); // サイズを入れ替え
                 return;
             };
             
@@ -655,14 +689,35 @@
                 const material = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: baseOpacity, depthWrite: false });
                 const circle = new THREE.Mesh(geometry, material);
 
-                const posX = ((d.x - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * graphSizeX - graphSizeX / 2;
-                const posZ = ((d.y - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * graphSizeZ - graphSizeZ / 2;
+                // 90度回転させるため、xとy(z)の座標計算を入れ替える
+                // 回答軸(1-5)の大小を逆転させる
+                const posX = ((d.y - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * graphSizeZ - graphSizeZ / 2;
+                const posZ = ((AXIS_CONFIG.X.MAX - d.x) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * graphSizeX - graphSizeX / 2;
+                
                 circle.position.set(posX, 0, posZ);
                 circle.rotation.x = -Math.PI / 2;
                 circle.userData = { x: d.x, y: d.y, z: d.z, dates: d.dates, originalColor: color.clone(), baseOpacity: baseOpacity };
                 graphGroup.add(circle);
             });
-            createAxesAndTicks2D(graphSizeX, graphSizeZ);
+            createAxesAndTicks2D(graphSizeZ, graphSizeX); // サイズを入れ替え
+        }
+
+        function updateColorLegend(maxValue) {
+            const legend = document.getElementById('color-legend');
+            const colorStops = [];
+            for (let i = 0; i <= 10; i++) {
+                const value = (i / 10) * maxValue;
+                colorStops.push(getColorForValue(value, maxValue).getStyle());
+            }
+
+            legend.innerHTML = `
+                <div class="legend-title">回答数</div>
+                <div class="legend-gradient" style="background: linear-gradient(to right, ${colorStops.join(', ')});"></div>
+                <div class="legend-labels">
+                    <span>0</span>
+                    <span>${maxValue}</span>
+                </div>
+            `;
         }
 
         function getColorForValue(value, maxValue) {
@@ -698,7 +753,10 @@
                 graphGroup.add(tickLabel);
             }
 
-            graphGroup.add(createTextSprite(AXIS_CONFIG.Z.LABEL, {fontsize: 36, ...axisLabelColor}).translateY(sizeY + 50));
+            const zLabel = createTextSprite(AXIS_CONFIG.Z.LABEL, {fontsize: 36, ...axisLabelColor});
+            zLabel.position.y = sizeY + 50;
+            graphGroup.add(zLabel);
+
             for (let value = 5; value <= displayMaxZ; value += 5) {
                 if (displayMaxZ > 0) {
                     const yPos = (value / displayMaxZ) * sizeY;
@@ -728,31 +786,32 @@
             });
         }
 
-        function createAxesAndTicks2D(sizeX, sizeZ) {
+        function createAxesAndTicks2D(sizeX, sizeZ) { // sizeX はY軸(観光客数), sizeZはX軸(回答)のサイズ
             const tickColor = { r: 60, g: 60, b: 60, a: 1.0 };
             const axisLabelColor = { r: 0, g: 0, b: 0, a: 1.0 };
             
-            const xLabel = createTextSprite(AXIS_CONFIG.X.LABEL, {fontsize: 36, ...axisLabelColor});
+            // 下側の軸 (元Y軸、推定観光客数)
+            const xLabel = createTextSprite(AXIS_CONFIG.Y.LABEL, {fontsize: 36, ...axisLabelColor});
             xLabel.position.set(0, 0, sizeZ / 2 + 100);
             graphGroup.add(xLabel);
-            for (let i = AXIS_CONFIG.X.MIN; i <= AXIS_CONFIG.X.MAX; i++) {
-                const xPos = ((i - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * sizeX - sizeX / 2;
-                const xTick = createTextSprite(i.toString(), {fontsize: 56, ...tickColor});
+            for (let i = 0; i <= 6; i++) {
+                const value = AXIS_CONFIG.Y.MIN + (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN) * (i / 6);
+                const xPos = ((value - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * sizeX - sizeX / 2;
+                const xTick = createTextSprite(Math.round(value).toString(), {fontsize: 56, ...tickColor});
                 xTick.position.set(xPos, 0, sizeZ / 2 + 40);
                 graphGroup.add(xTick);
             }
 
-            const yLabel = createTextSprite(AXIS_CONFIG.Y.LABEL, {fontsize: 36, ...axisLabelColor});
-            yLabel.position.set(sizeX / 2 + 120, 0, 0);
-            yLabel.rotation.y = -Math.PI / 2;
+            // 左側の軸 (元X軸、回答)
+            const yLabel = createTextSprite(AXIS_CONFIG.X.LABEL, {fontsize: 36, ...axisLabelColor});
+            yLabel.position.set(-sizeX / 2 - 120, 0, 0);
             graphGroup.add(yLabel);
-            for (let i = 0; i <= 6; i++) {
-                const value = AXIS_CONFIG.Y.MIN + (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN) * (i / 6);
-                const zPos = ((value - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * sizeZ - sizeZ / 2;
-                const tickLabel = createTextSprite(Math.round(value).toString(), {fontsize: 56, ...tickColor});
-                tickLabel.position.set(sizeX / 2 + 40, 0, zPos);
-                tickLabel.rotation.y = -Math.PI / 2;
-                graphGroup.add(tickLabel);
+            for (let i = AXIS_CONFIG.X.MIN; i <= AXIS_CONFIG.X.MAX; i++) {
+                // 軸の数値を逆転させる
+                const zPos = ((AXIS_CONFIG.X.MAX - i) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * sizeZ - sizeZ / 2;
+                const yTick = createTextSprite(i.toString(), {fontsize: 56, ...tickColor});
+                yTick.position.set(-sizeX / 2 - 40, 0, zPos);
+                graphGroup.add(yTick);
             }
         }
 
@@ -763,11 +822,22 @@
             camera.aspect = aspect;
             camera.updateProjectionMatrix();
 
-            const frustumSize = graphSizeZ; 
-            orthoCamera.left = frustumSize * aspect / -2;
-            orthoCamera.right = frustumSize * aspect / 2;
-            orthoCamera.top = frustumSize / 2;
-            orthoCamera.bottom = frustumSize / -2;
+            // Ortho Cameraの更新
+            const graphAspect = graphSizeZ / graphSizeX; // 横長グラフのアスペクト比 (幅 / 高さ)
+            const margin = 1.6; // UIと重ならないようにマージンを大きくする
+            if (aspect > graphAspect) {
+                // ウィンドウがグラフより横長 -> 高さに合わせる
+                orthoCamera.top = (graphSizeX / 2) * margin;
+                orthoCamera.bottom = (-graphSizeX / 2) * margin;
+                orthoCamera.left = orthoCamera.bottom * aspect;
+                orthoCamera.right = orthoCamera.top * aspect;
+            } else {
+                // ウィンドウがグラフより縦長 -> 幅に合わせる
+                orthoCamera.left = (-graphSizeZ / 2) * margin;
+                orthoCamera.right = (graphSizeZ / 2) * margin;
+                orthoCamera.top = orthoCamera.right / aspect;
+                orthoCamera.bottom = orthoCamera.left / aspect;
+            }
             orthoCamera.updateProjectionMatrix();
 
             renderer.setSize(container.clientWidth, container.clientHeight);
