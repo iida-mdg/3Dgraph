@@ -214,7 +214,7 @@
 <body>
     <div id="controls">
         <details open>
-            <summary>フィルター</summary>
+            <summary>絞り込み</summary>
             <div>
                 <label for="job-filter">職種</label>
                 <select id="job-filter"></select>
@@ -232,7 +232,7 @@
         </details>
 
         <details>
-            <summary>気象データ</summary>
+            <summary>気象</summary>
             <div>
                 <label for="precipitation-filter">合計降水量 (mm)</label>
                 <div class="range-filter">
@@ -729,39 +729,43 @@
             const tickColor = { r: 60, g: 60, b: 60, a: 1.0 };
             const axisLabelColor = { r: 0, g: 0, b: 0, a: 1.0 };
 
+            // X軸 (回答) - 奥の辺に移動
             const xLabel = createTextSprite(AXIS_CONFIG.X.LABEL, {fontsize: 36, ...axisLabelColor});
-            xLabel.position.set(0, -50, sizeZ / 2 + 60);
+            xLabel.position.set(0, -50, -sizeZ / 2 - 60);
             graphGroup.add(xLabel);
 
             for (let i = AXIS_CONFIG.X.MIN; i <= AXIS_CONFIG.X.MAX; i++) {
                 const xPos = ((i - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * sizeX - sizeX / 2;
                 const xTick = createTextSprite(i.toString(), {fontsize: 56, ...tickColor});
-                xTick.position.set(xPos, 0, sizeZ / 2 + 20);
+                xTick.position.set(xPos, 0, -sizeZ / 2 - 20);
                 graphGroup.add(xTick);
             }
 
+            // Y軸 (推定観光客数) - 左の辺に移動
             const yLabel = createTextSprite(AXIS_CONFIG.Y.LABEL, {fontsize: 36, ...axisLabelColor});
-            yLabel.position.set(sizeX / 2 + 120, -50, 0);
-            yLabel.rotation.y = -Math.PI / 2;
+            yLabel.position.set(-sizeX / 2 - 120, -50, 0);
+            yLabel.rotation.y = Math.PI / 2;
             graphGroup.add(yLabel);
             for (let i = 0; i <= 6; i++) {
                 const value = AXIS_CONFIG.Y.MIN + (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN) * (i / 6);
                 const zPos = ((value - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * sizeZ - sizeZ / 2;
                 const tickLabel = createTextSprite(Math.round(value).toString(), {fontsize: 56, ...tickColor});
-                tickLabel.position.set(sizeX / 2 + 20, 0, zPos);
-                tickLabel.rotation.y = -Math.PI / 2;
+                tickLabel.position.set(-sizeX / 2 - 40, 0, zPos);
+                tickLabel.rotation.y = Math.PI / 2;
                 graphGroup.add(tickLabel);
             }
 
             const zLabel = createTextSprite(AXIS_CONFIG.Z.LABEL, {fontsize: 36, ...axisLabelColor});
-            zLabel.position.y = sizeY + 50;
+            // X軸とY軸の交点に移動
+            zLabel.position.set(-sizeX / 2, sizeY + 50, -sizeZ / 2);
             graphGroup.add(zLabel);
 
             for (let value = 5; value <= displayMaxZ; value += 5) {
                 if (displayMaxZ > 0) {
                     const yPos = (value / displayMaxZ) * sizeY;
                     const zTick = createTextSprite(value.toString(), {fontsize: 56, ...tickColor});
-                    zTick.position.set(-sizeX / 2 - 45, yPos, 0);
+                    // X軸とY軸の交点に移動
+                    zTick.position.set(-sizeX / 2, yPos, -sizeZ / 2);
                     graphGroup.add(zTick);
                 }
             }
@@ -893,5 +897,8 @@
     </script>
 </body>
 </html>
+
+
+
 
 
