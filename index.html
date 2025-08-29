@@ -87,20 +87,61 @@
             margin-left: 5px;
             white-space: nowrap;
         }
+
+        #controls details {
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            background-color: #ffffff;
+            transition: background-color 0.2s ease-in-out;
+        }
+        #controls details[open] {
+            background-color: #f9f9f9;
+        }
+        #controls summary {
+            font-weight: 700;
+            padding: 10px;
+            cursor: pointer;
+            list-style: none;
+            outline: none;
+        }
+        #controls summary::-webkit-details-marker {
+            display: none;
+        }
+        #controls details > div {
+            padding: 0 10px 10px 10px;
+            border-top: 1px solid #e0e0e0;
+            margin-top: 5px;
+        }
     </style>
 </head>
 <body>
     <div id="controls">
-        <label for="job-filter">職種</label>
-        <select id="job-filter"></select>
-        <label for="area-filter">組区域</label>
-        <select id="area-filter"></select>
-
-        <label for="month-filter">月選択 (複数可)</label>
-        <div id="month-filter-container"></div>
+        <details open>
+            <summary>フィルター</summary>
+            <div>
+                <label for="job-filter">職種</label>
+                <select id="job-filter"></select>
+                <label for="area-filter">組区域</label>
+                <select id="area-filter"></select>
+                <label for="day-type-filter">表示期間</label>
+                <select id="day-type-filter">
+                    <option value="すべて">すべて</option>
+                    <option value="平日のみ">平日のみ</option>
+                    <option value="土日祝のみ">土日祝のみ</option>
+                </select>
+                <label for="month-filter">月選択 (複数可)</label>
+                <div id="month-filter-container"></div>
+            </div>
+        </details>
         
-        <label for="opacity-slider">グラフ透明度</label>
-        <input type="range" id="opacity-slider" min="0.05" max="1.0" step="0.01" value="0.35">
+        <details open>
+            <summary>表示設定</summary>
+            <div>
+                <label for="opacity-slider">グラフ透明度</label>
+                <input type="range" id="opacity-slider" min="0.01" max="0.8" step="0.01" value="0.35">
+            </div>
+        </details>
     </div>
     <div id="container"></div>
     <div id="tooltip"></div>
@@ -167,16 +208,27 @@
         function refilterAndDrawGraph() {
             const jobFilter = document.getElementById('job-filter');
             const areaFilter = document.getElementById('area-filter');
+            const dayTypeFilter = document.getElementById('day-type-filter');
             const monthFilterContainer = document.getElementById('month-filter-container');
             
             const selectedJob = jobFilter.value;
             const selectedArea = areaFilter.value;
+            const selectedDayType = dayTypeFilter.value;
             const selectedMonths = Array.from(monthFilterContainer.querySelectorAll('input:checked')).map(cb => cb.value);
 
-            let filteredRaw = rawData.filter(d => 
-                (selectedJob === 'すべて' || d.job === selectedJob) &&
-                (selectedArea === 'すべて' || d.area === selectedArea)
-            );
+            let filteredRaw = rawData.filter(d => {
+                const jobMatch = (selectedJob === 'すべて' || d.job === selectedJob);
+                const areaMatch = (selectedArea === 'すべて' || d.area === selectedArea);
+                
+                let dayTypeMatch = true;
+                if (selectedDayType === '平日のみ') {
+                    dayTypeMatch = !isWeekendOrHoliday(d.date);
+                } else if (selectedDayType === '土日祝のみ') {
+                    dayTypeMatch = isWeekendOrHoliday(d.date);
+                }
+                
+                return jobMatch && areaMatch && dayTypeMatch;
+            });
 
             if (selectedMonths.length > 0) {
                 filteredRaw = filteredRaw.filter(d => selectedMonths.includes(d.date.substring(0, 7)));
@@ -228,6 +280,7 @@
         function setupFiltersAndDisplayGraph() {
             const jobFilter = document.getElementById('job-filter');
             const areaFilter = document.getElementById('area-filter');
+            const dayTypeFilter = document.getElementById('day-type-filter');
             const monthFilterContainer = document.getElementById('month-filter-container');
             const opacitySlider = document.getElementById('opacity-slider');
             
@@ -237,7 +290,12 @@
 
             const uniqueJobs = ['すべて', ...new Set(rawData.map(d => d.job))];
             const uniqueAreas = ['すべて', ...new Set(rawData.map(d => d.area))];
-            const uniqueMonths = [...new Set(rawData.map(d => d.date.substring(0, 7)))].sort();
+            const uniqueMonths = [...new Set(rawData.map(d => d.date.substring(0, 7)))].sort((a, b) => {
+                // 'YYYY/MM' を Date オブジェクトに変換して比較
+                const dateA = new Date(a + '/01');
+                const dateB = new Date(b + '/01');
+                return dateA - dateB;
+            });
 
             uniqueJobs.forEach(job => {
                 const option = document.createElement('option');
@@ -272,6 +330,7 @@
             
             jobFilter.addEventListener('change', refilterAndDrawGraph);
             areaFilter.addEventListener('change', refilterAndDrawGraph);
+            dayTypeFilter.addEventListener('change', refilterAndDrawGraph);
             opacitySlider.addEventListener('input', updateOpacity);
 
             refilterAndDrawGraph();
@@ -317,6 +376,48 @@
             return Object.values(counts).map(d => ({ ...d, dates: Array.from(d.dates).sort() }));
         }
 
+        // --- 祝日判定ロジック ---
+        function isJapaneseHoliday(date) {
+            const year = date.getFullYear();
+            const month = date.getMonth() + 1; // 1-12
+            const day = date.getDate();
+            const dayOfWeek = date.getDay(); // 0:Sun, 1:Mon ... 6:Sat
+
+            // 固定祝日
+            const fixedHolidays = {
+                '1/1': '元日', '2/11': '建国記念の日', '2/23': '天皇誕生日', '4/29': '昭和の日',
+                '5/3': '憲法記念日', '5/4': 'みどりの日', '5/5': 'こどもの日', '11/3': '文化の日', '11/23': '勤労感謝の日'
+            };
+            if (fixedHolidays[`${month}/${day}`]) return true;
+
+            // ハッピーマンデー
+            if (month === 1 && dayOfWeek === 1 && day > 7 && day <= 14) return true; // 成人の日
+            if (month === 7 && dayOfWeek === 1 && day > 14 && day <= 21) return true; // 海の日
+            if (month === 9 && dayOfWeek === 1 && day > 14 && day <= 21) return true; // 敬老の日
+            if (month === 10 && dayOfWeek === 1 && day > 7 && day <= 14) return true; // スポーツの日
+
+            // 春分の日・秋分の日（簡易計算）
+            if (month === 3 && day === Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4))) return true;
+            if (month === 9 && day === Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4))) return true;
+
+            // 振替休日 (祝日が日曜の場合、次の平日)
+            if (dayOfWeek === 1) {
+                const prevDay = new Date(date);
+                prevDay.setDate(day - 1);
+                if (prevDay.getDay() === 0 && isJapaneseHoliday(prevDay)) return true;
+            }
+            return false;
+        }
+
+        function isWeekendOrHoliday(dateStr) {
+            const date = new Date(dateStr.replace(/\//g, '-'));
+            const dayOfWeek = date.getDay();
+            if (dayOfWeek === 0 || dayOfWeek === 6) { // Sunday or Saturday
+                return true;
+            }
+            return isJapaneseHoliday(date);
+        }
+
         // --- 3Dシーン設定 ---
         function init() {
             scene = new THREE.Scene();
@@ -349,21 +450,25 @@
             document.addEventListener('mousemove', onMouseMove, false);
         }
         
-        function createCustomGrid(sizeX, sizeZ, divisionsX, divisionsZ) {
+        function createCustomGrid(sizeX, sizeZ, divisionsX, divisionsZ, color = 0xcccccc) {
             const vertices = [];
             const halfSizeX = sizeX / 2;
             const halfSizeZ = sizeZ / 2;
-            for (let i = 0; i <= divisionsX; i++) {
-                const x = (i / divisionsX) * sizeX - halfSizeX;
-                vertices.push(x, 0, -halfSizeZ, x, 0, halfSizeZ);
+            if (divisionsX > 0) {
+                for (let i = 0; i <= divisionsX; i++) {
+                    const x = (i / divisionsX) * sizeX - halfSizeX;
+                    vertices.push(x, 0, -halfSizeZ, x, 0, halfSizeZ);
+                }
             }
-            for (let i = 0; i <= divisionsZ; i++) {
-                const z = (i / divisionsZ) * sizeZ - halfSizeZ;
-                vertices.push(-halfSizeX, 0, z, halfSizeX, 0, z);
+            if (divisionsZ > 0) {
+                for (let i = 0; i <= divisionsZ; i++) {
+                    const z = (i / divisionsZ) * sizeZ - halfSizeZ;
+                    vertices.push(-halfSizeX, 0, z, halfSizeX, 0, z);
+                }
             }
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-            const material = new THREE.LineBasicMaterial({ color: 0xcccccc });
+            const material = new THREE.LineBasicMaterial({ color: color });
             return new THREE.LineSegments(geometry, material);
         }
 
@@ -372,16 +477,26 @@
                 graphGroup.remove(graphGroup.children[0]); 
             }
 
-            const maxZ = processedData.length > 0 ? Math.max(...processedData.map(d => d.z)) : 1;
+            const maxZ = processedData.length > 0 ? Math.max(...processedData.map(d => d.z)) : 20; // データがない場合はデフォルトで20
+            const displayMaxZ = Math.ceil(maxZ / 5) * 5; // 5の倍数に切り上げる
             
-            const graphSizeX = 750 * 2; // X軸の間隔を2倍に
-            const graphSizeZ = 750 * 3; // X:Yが1:3になるように
+            const graphSizeX = 750 * 3; // X軸の間隔を2倍に
+            const graphSizeZ = 750 * 5; // X:Yが1:3になるように
             const graphHeight = 600; // グラフの高さを上げる
             const barWidth = 100; // 棒グラフの底面を小さくする
 
-            const customGrid = createCustomGrid(graphSizeX, graphSizeZ, AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN, 10);
-            customGrid.position.y = -0.5;
-            graphGroup.add(customGrid);
+            // 主グリッド線 (Y軸は6分割=2000刻み)
+            const mainGrid = createCustomGrid(graphSizeX, graphSizeZ, AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN, 6);
+            mainGrid.position.y = -0.5;
+            graphGroup.add(mainGrid);
+
+            // 副グリッド線 (Y軸のみ, 12分割=1000刻み)
+            const subGrid = createCustomGrid(graphSizeX, graphSizeZ, 0, 12, 0xe0e0e0);
+            subGrid.position.y = -0.5;
+            graphGroup.add(subGrid);
+
+            // 補助目盛りを追加
+            createAuxiliaryTicks(graphSizeX, graphSizeZ);
 
             if (data.length === 0) {
                 showErrorMessage("表示するデータがありません");
@@ -393,7 +508,7 @@
             const barColor = new THREE.Color(0x0077b6);
 
             data.forEach(d => {
-                const barHeight = (d.z / maxZ) * graphHeight;
+                const barHeight = (d.z / displayMaxZ) * graphHeight; // maxZからdisplayMaxZに変更
                 if (barHeight <= 0) return;
 
                 const geometry = new THREE.BoxGeometry(barWidth, barHeight, barWidth);
@@ -430,10 +545,10 @@
                 graphGroup.add(line);
             });
             
-            createAxesAndTicks(maxZ, graphSizeX, graphSizeZ, graphHeight);
+            createAxesAndTicks(displayMaxZ, graphSizeX, graphSizeZ, graphHeight);
         }
 
-        function createAxesAndTicks(maxZ, sizeX, sizeZ, sizeY) {
+        function createAxesAndTicks(displayMaxZ, sizeX, sizeZ, sizeY) {
             const tickColor = { r: 60, g: 60, b: 60, a: 1.0 };
             const axisLabelColor = { r: 0, g: 0, b: 0, a: 1.0 };
 
@@ -444,7 +559,7 @@
             for (let i = AXIS_CONFIG.X.MIN; i <= AXIS_CONFIG.X.MAX; i++) {
                 const xPos = ((i - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * sizeX - sizeX / 2;
                 const tickLabel = createTextSprite(i.toString(), {fontsize: 28, ...tickColor});
-                tickLabel.position.set(xPos, -25, sizeZ / 2 + 20);
+                tickLabel.position.set(xPos, 0, sizeZ / 2 + 20); // Y位置を-25から0に修正
                 graphGroup.add(tickLabel);
             }
 
@@ -458,26 +573,45 @@
                 const zPos = ((value - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * sizeZ - sizeZ / 2;
                 const tickLabel = createTextSprite(Math.round(value).toString(), {fontsize: 28, ...tickColor});
                 const xOffset = sizeX / 2 + 20;
-                tickLabel.position.set(xOffset, -25, zPos);
+                tickLabel.position.set(xOffset, 0, zPos); // Y位置を-25から0に修正
                 tickLabel.rotation.y = -Math.PI / 2;
                 graphGroup.add(tickLabel);
             }
 
             graphGroup.add(createTextSprite(AXIS_CONFIG.Z.LABEL, {fontsize: 36, ...axisLabelColor}).translateY(sizeY + 50));
-            const generatedLabels = new Set();
-            const tickCount = 4;
-            for (let i = 0; i <= tickCount; i++) {
-                const value = Math.round((maxZ / tickCount) * i);
-                if (generatedLabels.has(value) || value === 0 && maxZ > 0) continue;
-                generatedLabels.add(value);
-                
-                if (maxZ > 0) {
-                    const yPos = (value / maxZ) * sizeY;
+            
+            for (let value = 5; value <= displayMaxZ; value += 5) {
+                if (displayMaxZ > 0) {
+                    const yPos = (value / displayMaxZ) * sizeY;
                     const tickLabel = createTextSprite(value.toString(), {fontsize: 28, ...tickColor});
                     tickLabel.position.set(-sizeX / 2 - 45, yPos, 0);
                     graphGroup.add(tickLabel);
                 }
             }
+        }
+
+        function createAuxiliaryTicks(sizeX, sizeZ) {
+            const tickValues = [2000, 4000, 6000, 8000, 10000];
+            const xPositions = [1.5, 2.5, 3.5, 4.5];
+            const tickColor = { r: 150, g: 150, b: 150, a: 1.0 }; // グレー
+
+            xPositions.forEach(xVal => {
+                // X軸の値がグラフ範囲内にあるかチェック
+                if (xVal >= AXIS_CONFIG.X.MIN && xVal <= AXIS_CONFIG.X.MAX) {
+                    tickValues.forEach(yVal => {
+                        // Y軸の値がグラフ範囲内にあるかチェック
+                        if (yVal >= AXIS_CONFIG.Y.MIN && yVal <= AXIS_CONFIG.Y.MAX) {
+                            const posX = ((xVal - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * sizeX - sizeX / 2;
+                            const posZ = ((yVal - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * sizeZ - sizeZ / 2;
+
+                            const tickLabel = createTextSprite(yVal.toString(), { fontsize: 24, textColor: tickColor });
+                            // Y posisiionを少し持ち上げて、グリッド線と重ならないようにする
+                            tickLabel.position.set(posX, 0, posZ); // Y位置を5から0に修正
+                            graphGroup.add(tickLabel);
+                        }
+                    });
+                }
+            });
         }
 
         function onWindowResize() {
@@ -532,4 +666,6 @@
     </script>
 </body>
 </html>
+
+
 
