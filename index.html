@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>インタラクティブ3Dデータグラフ</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Noto Sans JP', sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+            overflow: hidden;
+        }
+        #container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        #tooltip {
+            position: absolute;
+            display: none;
+            padding: 12px;
+            background-color: rgba(0, 0, 0, 0.85);
+            color: white;
+            border-radius: 8px;
+            font-size: 14px;
+            pointer-events: none;
+            white-space: pre-wrap;
+            text-align: left;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            border: 1px solid rgba(255,255,255,0.2);
+            max-width: 250px;
+        }
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background-color: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            backdrop-filter: blur(8px);
+            max-width: 240px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        #controls h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        #controls label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+            font-weight: 700;
+        }
+        #controls select, #controls input[type="date"], #controls button {
+            width: 100%;
+            padding: 8px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            margin-bottom: 15px;
+            font-family: 'Noto Sans JP', sans-serif;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        #controls button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        #controls button:hover {
+            background-color: #0056b3;
+        }
+        #controls button.reset {
+            background-color: #6c757d;
+        }
+        #controls button.reset:hover {
+            background-color: #5a6268;
+        }
+        #month-filter-container {
+            max-height: 150px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            background-color: #fff;
+        }
+        #month-filter-container div {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        #month-filter-container label {
+            font-weight: 400;
+            margin-left: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h3>フィルター</h3>
+        <label for="job-filter">職種</label>
+        <select id="job-filter"></select>
+        <label for="area-filter">組区域</label>
+        <select id="area-filter"></select>
+
+        <label for="month-filter">月選択 (複数可)</label>
+        <div id="month-filter-container"></div>
+
+        <label for="date-filter">日付選択</label>
+        <input type="date" id="date-filter">
+        
+        <button id="apply-filter">適用</button>
+        <button id="reset-filter" class="reset">リセット</button>
+    </div>
+    <div id="container"></div>
+    <div id="tooltip"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+        // --- CSV/TSVデータが配置されているURLを指定してください ---
+        const dataUrl = "https://firebasestorage.googleapis.com/v0/b/gemini-beta-share.appspot.com/o/share%2F20240829103023_data.tsv?alt=media&token=c13038a8-b649-43c3-8f06-382a93b584a7";
+
+        // --- Three.js グローバル変数 ---
+        let scene, camera, renderer, controls;
+        let raycaster, mouse;
+        let intersected;
+        const tooltip = document.getElementById('tooltip');
+        const graphGroup = new THREE.Group();
+        let rawData = [];
+        let processedData = [];
+
+        // --- グラフの固定スケール定義 ---
+        const AXIS_CONFIG = {
+            X: { MIN: 1, MAX: 5, LABEL: '数値 (X)' },
+            Y: { MIN: 0, MAX: 12000, LABEL: '人数推計 (Y)' },
+            Z: { LABEL: '回答数 (Z)' }
+        };
+
+        // --- ユーティリティ関数 ---
+        function createTextSprite(text, options = {}) {
+            const { fontsize = 32, fontface = 'Noto Sans JP', textColor = { r: 0, g: 0, b: 0, a: 1.0 } } = options;
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            const font = `Bold ${fontsize}px ${fontface}`;
+            context.font = font;
+            const metrics = context.measureText(text);
+            const textWidth = metrics.width;
+            const resolutionScale = 3; 
+            canvas.width = textWidth * resolutionScale;
+            canvas.height = fontsize * resolutionScale * 1.2;
+            context.scale(resolutionScale, resolutionScale);
+            context.font = font;
+            context.fillStyle = `rgba(${textColor.r}, ${textColor.g}, ${textColor.b}, ${textColor.a})`;
+            context.fillText(text, 0, fontsize);
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.minFilter = THREE.LinearFilter;
+            texture.needsUpdate = true;
+            const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+            const sprite = new THREE.Sprite(spriteMaterial);
+            sprite.scale.set(textWidth, fontsize * 1.2, 1.0);
+            return sprite;
+        }
+
+        function showMessage(message) {
+             while(graphGroup.children.length > 0){ 
+                graphGroup.remove(graphGroup.children[0]); 
+            }
+            const messageSprite = createTextSprite(message, {fontsize: 48, textColor: {r:100, g:100, b:100, a:1}});
+            messageSprite.position.set(0, 150, 0);
+            graphGroup.add(messageSprite);
+        }
+        const showLoadingMessage = (message) => showMessage(message);
+        const showErrorMessage = (message) => showMessage(message);
+
+        // --- 初期化 ---
+        init();
+        loadDataAndSetupGraph();
+        animate();
+        
+        async function loadDataAndSetupGraph() {
+            try {
+                showLoadingMessage("データを読み込み中...");
+                const response = await fetch(dataUrl);
+                if (!response.ok) {
+                    throw new Error(`ネットワークエラー: ${response.status} ${response.statusText}`);
+                }
+                const tsvData = await response.text();
+                rawData = parseData(tsvData);
+                processedData = processData(rawData);
+                setupFiltersAndDisplayGraph();
+            } catch (error) {
+                console.error('データの読み込みまたは解析に失敗しました:', error);
+                showErrorMessage('データ読込エラー');
+            }
+        }
+
+        function setupFiltersAndDisplayGraph() {
+            const jobFilter = document.getElementById('job-filter');
+            const areaFilter = document.getElementById('area-filter');
+            const monthFilterContainer = document.getElementById('month-filter-container');
+            const dateFilter = document.getElementById('date-filter');
+            const applyButton = document.getElementById('apply-filter');
+            const resetButton = document.getElementById('reset-filter');
+            
+            jobFilter.innerHTML = '';
+            areaFilter.innerHTML = '';
+            monthFilterContainer.innerHTML = '';
+
+            const uniqueJobs = ['すべて', ...new Set(rawData.map(d => d.job))];
+            const uniqueAreas = ['すべて', ...new Set(rawData.map(d => d.area))];
+            
+            const uniqueMonths = [...new Set(rawData.map(d => d.date.substring(0, 7)))].sort();
+
+            uniqueJobs.forEach(job => {
+                const option = document.createElement('option');
+                option.value = job;
+                option.textContent = job;
+                jobFilter.appendChild(option);
+            });
+
+            uniqueAreas.forEach(area => {
+                const option = document.createElement('option');
+                option.value = area;
+                option.textContent = area;
+                areaFilter.appendChild(option);
+            });
+
+            uniqueMonths.forEach(month => {
+                const div = document.createElement('div');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `month-${month}`;
+                checkbox.value = month;
+                const label = document.createElement('label');
+                label.htmlFor = `month-${month}`;
+                label.textContent = month;
+                div.appendChild(checkbox);
+                div.appendChild(label);
+                monthFilterContainer.appendChild(div);
+            });
+            
+            applyButton.onclick = () => {
+                const selectedJob = jobFilter.value;
+                const selectedArea = areaFilter.value;
+                
+                const selectedMonths = Array.from(monthFilterContainer.querySelectorAll('input:checked')).map(cb => cb.value);
+                const selectedDate = dateFilter.value ? dateFilter.value.replace(/-/g, '/') : '';
+
+                let filteredRaw = rawData.filter(d => 
+                    (selectedJob === 'すべて' || d.job === selectedJob) &&
+                    (selectedArea === 'すべて' || d.area === selectedArea)
+                );
+
+                if (selectedDate) {
+                    filteredRaw = filteredRaw.filter(d => d.date === selectedDate);
+                } else if (selectedMonths.length > 0) {
+                    filteredRaw = filteredRaw.filter(d => selectedMonths.includes(d.date.substring(0, 7)));
+                }
+                
+                const processed = processData(filteredRaw);
+                updateGraph(processed);
+            };
+
+            resetButton.onclick = () => {
+                jobFilter.value = 'すべて';
+                areaFilter.value = 'すべて';
+                dateFilter.value = '';
+                monthFilterContainer.querySelectorAll('input:checked').forEach(cb => cb.checked = false);
+                applyButton.click();
+            };
+            
+            applyButton.click();
+        }
+
+        // --- データ処理 ---
+        function parseData(dataStr) {
+            const lines = dataStr.trim().split(/\r?\n/);
+            const header = lines[0].split('\t');
+            
+            const requiredColumns = ['日時', '数値', '組区域', '職種', '人数推計'];
+            const indices = {};
+            requiredColumns.forEach(col => {
+                const index = header.indexOf(col);
+                if (index === -1) throw new Error(`必須列が見つかりません: ${col}`);
+                indices[col] = index;
+            });
+
+            return lines.slice(1).map(line => {
+                const parts = line.split('\t');
+                if (parts.length < header.length) return null;
+                const dateStr = parts[indices['日時']].split(' ')[0];
+                return {
+                    date: dateStr,
+                    num: parseInt(parts[indices['数値']], 10),
+                    area: parts[indices['組区域']],
+                    job: parts[indices['職種']],
+                    population: parseInt(parts[indices['人数推計']], 10)
+                };
+            }).filter(d => d && !isNaN(d.num) && !isNaN(d.population));
+        }
+        
+        function processData(filteredRawData) {
+            const counts = {};
+            filteredRawData.forEach(d => {
+                const key = `${d.num}_${d.population}`;
+                if (!counts[key]) {
+                    counts[key] = { x: d.num, y: d.population, z: 0, dates: new Set() };
+                }
+                counts[key].z++;
+                counts[key].dates.add(d.date);
+            });
+            return Object.values(counts).map(d => ({ ...d, dates: Array.from(d.dates).sort() }));
+        }
+
+        // --- 3Dシーン設定 ---
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf0f2f5);
+            scene.add(graphGroup);
+
+            const container = document.getElementById('container');
+            camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 1, 30000);
+            camera.position.set(1200, 900, 2500);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.9);
+            scene.add(hemisphereLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+            directionalLight.position.set(1, 1, 1).normalize();
+            scene.add(directionalLight);
+
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            window.addEventListener('resize', onWindowResize, false);
+            document.addEventListener('mousemove', onMouseMove, false);
+        }
+        
+        function createCustomGrid(sizeX, sizeZ, divisionsX, divisionsZ) {
+            const vertices = [];
+            const halfSizeX = sizeX / 2;
+            const halfSizeZ = sizeZ / 2;
+            for (let i = 0; i <= divisionsX; i++) {
+                const x = (i / divisionsX) * sizeX - halfSizeX;
+                vertices.push(x, 0, -halfSizeZ, x, 0, halfSizeZ);
+            }
+            for (let i = 0; i <= divisionsZ; i++) {
+                const z = (i / divisionsZ) * sizeZ - halfSizeZ;
+                vertices.push(-halfSizeX, 0, z, halfSizeX, 0, z);
+            }
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+            const material = new THREE.LineBasicMaterial({ color: 0xcccccc });
+            return new THREE.LineSegments(geometry, material);
+        }
+
+        function updateGraph(data) {
+            while(graphGroup.children.length > 0){ 
+                graphGroup.remove(graphGroup.children[0]); 
+            }
+
+            const maxZ = processedData.length > 0 ? Math.max(...processedData.map(d => d.z)) : 1;
+            
+            const graphSizeX = 750;
+            const graphSizeZ = 1250;
+            const graphHeight = 300;
+            const barWidth = 40;
+
+            const customGrid = createCustomGrid(graphSizeX, graphSizeZ, AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN, 10);
+            customGrid.position.y = -0.5;
+            graphGroup.add(customGrid);
+
+            if (data.length === 0) {
+                showErrorMessage("表示するデータがありません");
+                createAxesAndTicks(maxZ, graphSizeX, graphSizeZ, graphHeight);
+                return;
+            };
+
+            const barColor = new THREE.Color(0x0077b6);
+
+            data.forEach(d => {
+                const barHeight = (d.z / maxZ) * graphHeight;
+                const geometry = new THREE.BoxGeometry(barWidth, barHeight, barWidth);
+                
+                const material = new THREE.MeshLambertMaterial({ 
+                    color: barColor,
+                    transparent: true,
+                    opacity: 0.35,
+                    depthWrite: false
+                });
+                const bar = new THREE.Mesh(geometry, material);
+
+                const posX = ((d.x - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * graphSizeX - graphSizeX / 2;
+                const posZ = ((d.y - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * graphSizeZ - graphSizeZ / 2;
+                bar.position.set(posX, barHeight / 2, posZ);
+                
+                bar.userData = { x: d.x, y: d.y, z: d.z, originalColor: barColor.clone(), dates: d.dates };
+
+                const edges = new THREE.EdgesGeometry(geometry);
+                const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000, opacity: 0.1, transparent: true }));
+                line.position.copy(bar.position);
+                
+                graphGroup.add(bar);
+                graphGroup.add(line);
+            });
+            
+            createAxesAndTicks(maxZ, graphSizeX, graphSizeZ, graphHeight);
+        }
+
+        function createAxesAndTicks(maxZ, sizeX, sizeZ, sizeY) {
+            const tickColor = { r: 60, g: 60, b: 60, a: 1.0 };
+            const axisLabelColor = { r: 0, g: 0, b: 0, a: 1.0 };
+
+            const xLabel = createTextSprite(AXIS_CONFIG.X.LABEL, {fontsize: 36, ...axisLabelColor});
+            xLabel.position.set(0, -50, sizeZ / 2 + 60);
+            graphGroup.add(xLabel);
+
+            for (let i = AXIS_CONFIG.X.MIN; i <= AXIS_CONFIG.X.MAX; i++) {
+                const xPos = ((i - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * sizeX - sizeX / 2;
+                const tickLabel = createTextSprite(i.toString(), {fontsize: 28, ...tickColor});
+                tickLabel.position.set(xPos, -25, sizeZ / 2 + 20);
+                graphGroup.add(tickLabel);
+            }
+
+            const yLabel = createTextSprite(AXIS_CONFIG.Y.LABEL, {fontsize: 36, ...axisLabelColor});
+            yLabel.position.set(sizeX / 2 + 120, -50, 0);
+            yLabel.rotation.y = -Math.PI / 2;
+            graphGroup.add(yLabel);
+
+            for (let i = 0; i <= 6; i++) {
+                const value = AXIS_CONFIG.Y.MIN + (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN) * (i / 6);
+                const zPos = ((value - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * sizeZ - sizeZ / 2;
+                const tickLabel = createTextSprite(Math.round(value).toString(), {fontsize: 28, ...tickColor});
+                const xOffset = sizeX / 2 + 20;
+                tickLabel.position.set(xOffset, -25, zPos);
+                tickLabel.rotation.y = -Math.PI / 2;
+                graphGroup.add(tickLabel);
+            }
+
+            graphGroup.add(createTextSprite(AXIS_CONFIG.Z.LABEL, {fontsize: 36, ...axisLabelColor}).translateY(sizeY + 50));
+            const generatedLabels = new Set();
+            const tickCount = 4;
+            for (let i = 0; i <= tickCount; i++) {
+                const value = Math.round((maxZ / tickCount) * i);
+                if (generatedLabels.has(value) || value === 0) continue;
+                generatedLabels.add(value);
+                
+                if (maxZ > 0) {
+                    const yPos = (value / maxZ) * sizeY;
+                    const tickLabel = createTextSprite(value.toString(), {fontsize: 28, ...tickColor});
+                    tickLabel.position.set(-sizeX / 2 - 45, yPos, 0);
+                    graphGroup.add(tickLabel);
+                }
+            }
+        }
+
+        function onWindowResize() {
+            const container = document.getElementById('container');
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        function onMouseMove(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            tooltip.style.left = (event.clientX + 15) + 'px';
+            tooltip.style.top = (event.clientY + 15) + 'px';
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const bars = graphGroup.children.filter(c => c.isMesh && c.geometry.type === 'BoxGeometry');
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(bars);
+
+            if (intersects.length > 0) {
+                if (intersected !== intersects[0].object) {
+                    if (intersected) {
+                        intersected.renderOrder = 0;
+                        intersected.material.color.set(intersected.userData.originalColor);
+                        intersected.material.opacity = 0.35;
+                        intersected.material.depthWrite = false; 
+                    }
+                    intersected = intersects[0].object;
+                    intersected.renderOrder = 1; 
+                    intersected.material.color.set(0xff8c00); // Orange for hover
+                    intersected.material.opacity = 1.0;
+                    intersected.material.depthWrite = true; 
+                    
+                    const d = intersected.userData;
+                    const datesString = d.dates.slice(0, 10).join('\n') + (d.dates.length > 10 ? '\n...' : '');
+                    tooltip.style.display = 'block';
+                    tooltip.innerHTML = `数値 (X): ${d.x}<br>人数推計 (Y): ${d.y}<br>回答数 (Z): ${d.z}<br>日付:<br>${datesString}`;
+                }
+            } else {
+                if (intersected) {
+                    intersected.renderOrder = 0;
+                    intersected.material.color.set(intersected.userData.originalColor);
+                    intersected.material.opacity = 0.35;
+                    intersected.material.depthWrite = false; 
+                }
+                intersected = null;
+                tooltip.style.display = 'none';
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
