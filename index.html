@@ -113,6 +113,20 @@
             border-top: 1px solid #e0e0e0;
             margin-top: 5px;
         }
+        .range-filter {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-bottom: 12px;
+        }
+        .range-filter input {
+            width: calc(50% - 10px);
+            margin-bottom: 0;
+            padding: 6px;
+        }
+        .range-filter span {
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -124,7 +138,7 @@
                 <select id="job-filter"></select>
                 <label for="area-filter">組区域</label>
                 <select id="area-filter"></select>
-                <label for="day-type-filter">表示期間</label>
+                <label for="day-type-filter">平日・土日祝</label>
                 <select id="day-type-filter">
                     <option value="すべて">すべて</option>
                     <option value="平日のみ">平日のみ</option>
@@ -132,6 +146,30 @@
                 </select>
                 <label for="month-filter">月選択 (複数可)</label>
                 <div id="month-filter-container"></div>
+            </div>
+        </details>
+
+        <details>
+            <summary>気象データフィルター</summary>
+            <div>
+                <label for="precipitation-filter">合計降水量 (mm)</label>
+                <div class="range-filter">
+                    <input type="number" id="min-precipitation" step="0.1" placeholder="下限">
+                    <span>～</span>
+                    <input type="number" id="max-precipitation" step="0.1" placeholder="上限">
+                </div>
+                <label for="temp-filter">平均気温 (℃)</label>
+                <div class="range-filter">
+                    <input type="number" id="min-temp" step="0.1" placeholder="下限">
+                    <span>～</span>
+                    <input type="number" id="max-temp" step="0.1" placeholder="上限">
+                </div>
+                <label for="snow-filter">最深積雪 (cm)</label>
+                <div class="range-filter">
+                    <input type="number" id="min-snow" step="0.1" placeholder="下限">
+                    <span>～</span>
+                    <input type="number" id="max-snow" step="0.1" placeholder="上限">
+                </div>
             </div>
         </details>
         
@@ -151,7 +189,7 @@
 
     <script>
         // --- CSV/TSVデータが配置されているURLを指定してください ---
-        const dataUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQlxToUPHDkt8_LW1oWnTkixRcjUU9QfAzBbHhQNHO1sGQNRpaK7GZzL8hrFLm_MQAg2_qCu584fsYl/pub?gid=0&single=true&output=csv";
+        const dataUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTimFXmN6BqqjRD_bvIE61FVFnCsPKfIhjhKBXDt3kM7ntiDHOwfVGCWXzWAx9-m40wyzo4LL4J-Vb0/pub?gid=2054672738&single=true&output=csv";
 
         // --- Three.js グローバル変数 ---
         let scene, camera, renderer, controls;
@@ -210,6 +248,14 @@
             const areaFilter = document.getElementById('area-filter');
             const dayTypeFilter = document.getElementById('day-type-filter');
             const monthFilterContainer = document.getElementById('month-filter-container');
+
+            // 気象フィルターの値を取得
+            const minPrecipitation = parseFloat(document.getElementById('min-precipitation').value);
+            const maxPrecipitation = parseFloat(document.getElementById('max-precipitation').value);
+            const minTemp = parseFloat(document.getElementById('min-temp').value);
+            const maxTemp = parseFloat(document.getElementById('max-temp').value);
+            const minSnow = parseFloat(document.getElementById('min-snow').value);
+            const maxSnow = parseFloat(document.getElementById('max-snow').value);
             
             const selectedJob = jobFilter.value;
             const selectedArea = areaFilter.value;
@@ -227,7 +273,15 @@
                     dayTypeMatch = isWeekendOrHoliday(d.date);
                 }
                 
-                return jobMatch && areaMatch && dayTypeMatch;
+                // 気象データのフィルタリング
+                const precipitationMatch = (!isNaN(minPrecipitation) ? d.totalPrecipitation >= minPrecipitation : true) && 
+                                           (!isNaN(maxPrecipitation) ? d.totalPrecipitation < maxPrecipitation : true);
+                const tempMatch = (!isNaN(minTemp) ? d.avgTemp >= minTemp : true) && 
+                                  (!isNaN(maxTemp) ? d.avgTemp < maxTemp : true);
+                const snowMatch = (!isNaN(minSnow) ? d.maxSnowDepth >= minSnow : true) && 
+                                  (!isNaN(maxSnow) ? d.maxSnowDepth < maxSnow : true);
+
+                return jobMatch && areaMatch && dayTypeMatch && precipitationMatch && tempMatch && snowMatch;
             });
 
             if (selectedMonths.length > 0) {
@@ -283,6 +337,14 @@
             const dayTypeFilter = document.getElementById('day-type-filter');
             const monthFilterContainer = document.getElementById('month-filter-container');
             const opacitySlider = document.getElementById('opacity-slider');
+
+            // 気象フィルターのイベントリスナー
+            document.getElementById('min-precipitation').addEventListener('input', refilterAndDrawGraph);
+            document.getElementById('max-precipitation').addEventListener('input', refilterAndDrawGraph);
+            document.getElementById('min-temp').addEventListener('input', refilterAndDrawGraph);
+            document.getElementById('max-temp').addEventListener('input', refilterAndDrawGraph);
+            document.getElementById('min-snow').addEventListener('input', refilterAndDrawGraph);
+            document.getElementById('max-snow').addEventListener('input', refilterAndDrawGraph);
             
             jobFilter.innerHTML = '';
             areaFilter.innerHTML = '';
@@ -341,7 +403,7 @@
             const lines = dataStr.trim().split(/\r?\n/);
             const header = lines[0].split(',');
             
-            const requiredColumns = ['日時', '数値', '組区域', '職種', '人数推計'];
+            const requiredColumns = ['日時', '数値', '組区域', '職種', '人数推計', '合計降水量', '平均気温', '最深積雪'];
             const indices = {};
             requiredColumns.forEach(col => {
                 const index = header.indexOf(col);
@@ -353,14 +415,21 @@
                 const parts = line.split(',');
                 if (parts.length < header.length) return null;
                 const dateStr = parts[indices['日時']].split(' ')[0];
+                const totalPrecipitation = parseFloat(parts[indices['合計降水量']]);
+                const avgTemp = parseFloat(parts[indices['平均気温']]);
+                const maxSnowDepth = parseFloat(parts[indices['最深積雪']]);
+
                 return {
                     date: dateStr,
                     num: parseInt(parts[indices['数値']], 10),
                     area: parts[indices['組区域']],
                     job: parts[indices['職種']],
-                    population: parseInt(parts[indices['人数推計']], 10)
+                    population: parseInt(parts[indices['人数推計']], 10),
+                    totalPrecipitation: totalPrecipitation,
+                    avgTemp: avgTemp,
+                    maxSnowDepth: maxSnowDepth
                 };
-            }).filter(d => d && !isNaN(d.num) && !isNaN(d.population));
+            }).filter(d => d && !isNaN(d.num) && !isNaN(d.population) && !isNaN(d.totalPrecipitation) && !isNaN(d.avgTemp) && !isNaN(d.maxSnowDepth));
         }
         
         function processData(filteredRawData) {
@@ -666,6 +735,7 @@
     </script>
 </body>
 </html>
+
 
 
 
