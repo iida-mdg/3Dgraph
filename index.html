@@ -127,6 +127,60 @@
         .range-filter span {
             text-align: center;
         }
+
+        /* トグルスイッチのスタイル */
+        .toggle-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+        }
+        .toggle-container label {
+             margin-bottom: 0;
+        }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 28px;
+        }
+        .switch input { 
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+        }
+        input:checked + .slider {
+            background-color: #0077b6;
+        }
+        input:checked + .slider:before {
+            transform: translateX(22px);
+        }
+        .slider.round {
+            border-radius: 28px;
+        }
+        .slider.round:before {
+            border-radius: 50%;
+        }
     </style>
 </head>
 <body>
@@ -178,6 +232,13 @@
             <div>
                 <label for="opacity-slider">グラフ透明度</label>
                 <input type="range" id="opacity-slider" min="0.01" max="1.0" step="0.01" value="0.5">
+                <div class="toggle-container">
+                    <label for="view-mode-toggle">バブルチャート</label>
+                    <label class="switch">
+                        <input type="checkbox" id="view-mode-toggle">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
             </div>
         </details>
     </div>
@@ -192,7 +253,7 @@
         const dataUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTimFXmN6BqqjRD_bvIE61FVFnCsPKfIhjhKBXDt3kM7ntiDHOwfVGCWXzWAx9-m40wyzo4LL4J-Vb0/pub?gid=2054672738&single=true&output=csv";
 
         // --- Three.js グローバル変数 ---
-        let scene, camera, renderer, controls;
+        let scene, camera, orthoCamera, renderer, controls;
         let raycaster, mouse;
         let intersected = null;
         const tooltip = document.getElementById('tooltip');
@@ -206,6 +267,8 @@
             Y: { MIN: 0, MAX: 12000, LABEL: '推定観光客数' },
             Z: { LABEL: '回答数' }
         };
+        const graphSizeX = 750 * 3; 
+        const graphSizeZ = 750 * 5; 
 
         // --- ユーティリティ関数 ---
         function createTextSprite(text, options = {}) {
@@ -249,7 +312,6 @@
             const dayTypeFilter = document.getElementById('day-type-filter');
             const monthFilterContainer = document.getElementById('month-filter-container');
 
-            // 気象フィルターの値を取得
             const minPrecipitation = parseFloat(document.getElementById('min-precipitation').value);
             const maxPrecipitation = parseFloat(document.getElementById('max-precipitation').value);
             const minTemp = parseFloat(document.getElementById('min-temp').value);
@@ -273,7 +335,6 @@
                     dayTypeMatch = isWeekendOrHoliday(d.date);
                 }
                 
-                // 気象データのフィルタリング
                 const precipitationMatch = (!isNaN(minPrecipitation) ? d.totalPrecipitation >= minPrecipitation : true) && 
                                            (!isNaN(maxPrecipitation) ? d.totalPrecipitation < maxPrecipitation : true);
                 const tempMatch = (!isNaN(minTemp) ? d.avgTemp >= minTemp : true) && 
@@ -297,19 +358,17 @@
             const newOpacity = parseFloat(opacitySlider.value);
 
             graphGroup.children.forEach(child => {
-                if (child.isMesh && child.geometry.type === 'BoxGeometry') {
+                if (child.isMesh) {
                     child.userData.baseOpacity = newOpacity;
                     if (child !== intersected) {
                         child.material.opacity = newOpacity;
                     }
                 } else if (child.isLineSegments && child.userData.isOutline) {
-                    // 枠線の透明度も連動させる（本体より薄くする）
                     child.material.opacity = newOpacity * 0.4;
                 }
             });
         }
 
-        // --- 初期化 ---
         init();
         loadDataAndSetupGraph();
         animate();
@@ -318,9 +377,7 @@
             try {
                 showLoadingMessage("データを読み込み中...");
                 const response = await fetch(dataUrl);
-                if (!response.ok) {
-                    throw new Error(`ネットワークエラー: ${response.status} ${response.statusText}`);
-                }
+                if (!response.ok) throw new Error(`ネットワークエラー: ${response.status} ${response.statusText}`);
                 const csvData = await response.text();
                 rawData = parseData(csvData);
                 processedData = processData(rawData);
@@ -337,8 +394,8 @@
             const dayTypeFilter = document.getElementById('day-type-filter');
             const monthFilterContainer = document.getElementById('month-filter-container');
             const opacitySlider = document.getElementById('opacity-slider');
+            const viewModeToggle = document.getElementById('view-mode-toggle');
 
-            // 気象フィルターのイベントリスナー
             document.getElementById('min-precipitation').addEventListener('input', refilterAndDrawGraph);
             document.getElementById('max-precipitation').addEventListener('input', refilterAndDrawGraph);
             document.getElementById('min-temp').addEventListener('input', refilterAndDrawGraph);
@@ -352,12 +409,7 @@
 
             const uniqueJobs = ['すべて', ...new Set(rawData.map(d => d.job))];
             const uniqueAreas = ['すべて', ...new Set(rawData.map(d => d.area))];
-            const uniqueMonths = [...new Set(rawData.map(d => d.date.substring(0, 7)))].sort((a, b) => {
-                // 'YYYY/MM' を Date オブジェクトに変換して比較
-                const dateA = new Date(a + '/01');
-                const dateB = new Date(b + '/01');
-                return dateA - dateB;
-            });
+            const uniqueMonths = [...new Set(rawData.map(d => d.date.substring(0, 7)))].sort((a, b) => new Date(a + '/01') - new Date(b + '/01'));
 
             uniqueJobs.forEach(job => {
                 const option = document.createElement('option');
@@ -365,14 +417,12 @@
                 option.textContent = job;
                 jobFilter.appendChild(option);
             });
-
             uniqueAreas.forEach(area => {
                 const option = document.createElement('option');
                 option.value = area;
                 option.textContent = area;
                 areaFilter.appendChild(option);
             });
-
             uniqueMonths.forEach(month => {
                 const [year, monthNum] = month.split('/');
                 const labelText = `${year}年${parseInt(monthNum, 10)}月`;
@@ -394,15 +444,14 @@
             areaFilter.addEventListener('change', refilterAndDrawGraph);
             dayTypeFilter.addEventListener('change', refilterAndDrawGraph);
             opacitySlider.addEventListener('input', updateOpacity);
+            viewModeToggle.addEventListener('change', refilterAndDrawGraph);
 
             refilterAndDrawGraph();
         }
 
-        // --- データ処理 ---
         function parseData(dataStr) {
             const lines = dataStr.trim().split(/\r?\n/);
             const header = lines[0].split(',');
-            
             const requiredColumns = ['日時', '数値', '組区域', '職種', '人数推計', '合計降水量', '平均気温', '最深積雪'];
             const indices = {};
             requiredColumns.forEach(col => {
@@ -414,20 +463,15 @@
             return lines.slice(1).map(line => {
                 const parts = line.split(',');
                 if (parts.length < header.length) return null;
-                const dateStr = parts[indices['日時']].split(' ')[0];
-                const totalPrecipitation = parseFloat(parts[indices['合計降水量']]);
-                const avgTemp = parseFloat(parts[indices['平均気温']]);
-                const maxSnowDepth = parseFloat(parts[indices['最深積雪']]);
-
                 return {
-                    date: dateStr,
+                    date: parts[indices['日時']].split(' ')[0],
                     num: parseInt(parts[indices['数値']], 10),
                     area: parts[indices['組区域']],
                     job: parts[indices['職種']],
                     population: parseInt(parts[indices['人数推計']], 10),
-                    totalPrecipitation: totalPrecipitation,
-                    avgTemp: avgTemp,
-                    maxSnowDepth: maxSnowDepth
+                    totalPrecipitation: parseFloat(parts[indices['合計降水量']]),
+                    avgTemp: parseFloat(parts[indices['平均気温']]),
+                    maxSnowDepth: parseFloat(parts[indices['最深積雪']])
                 };
             }).filter(d => d && !isNaN(d.num) && !isNaN(d.population) && !isNaN(d.totalPrecipitation) && !isNaN(d.avgTemp) && !isNaN(d.maxSnowDepth));
         }
@@ -445,31 +489,23 @@
             return Object.values(counts).map(d => ({ ...d, dates: Array.from(d.dates).sort() }));
         }
 
-        // --- 祝日判定ロジック ---
         function isJapaneseHoliday(date) {
             const year = date.getFullYear();
-            const month = date.getMonth() + 1; // 1-12
+            const month = date.getMonth() + 1;
             const day = date.getDate();
-            const dayOfWeek = date.getDay(); // 0:Sun, 1:Mon ... 6:Sat
+            const dayOfWeek = date.getDay();
 
-            // 固定祝日
-            const fixedHolidays = {
-                '1/1': '元日', '2/11': '建国記念の日', '2/23': '天皇誕生日', '4/29': '昭和の日',
-                '5/3': '憲法記念日', '5/4': 'みどりの日', '5/5': 'こどもの日', '11/3': '文化の日', '11/23': '勤労感謝の日'
-            };
+            const fixedHolidays = {'1/1':'元日','2/11':'建国記念の日','2/23':'天皇誕生日','4/29':'昭和の日','5/3':'憲法記念日','5/4':'みどりの日','5/5':'こどもの日','11/3':'文化の日','11/23':'勤労感謝の日'};
             if (fixedHolidays[`${month}/${day}`]) return true;
 
-            // ハッピーマンデー
-            if (month === 1 && dayOfWeek === 1 && day > 7 && day <= 14) return true; // 成人の日
-            if (month === 7 && dayOfWeek === 1 && day > 14 && day <= 21) return true; // 海の日
-            if (month === 9 && dayOfWeek === 1 && day > 14 && day <= 21) return true; // 敬老の日
-            if (month === 10 && dayOfWeek === 1 && day > 7 && day <= 14) return true; // スポーツの日
+            if (month === 1 && dayOfWeek === 1 && day > 7 && day <= 14) return true;
+            if (month === 7 && dayOfWeek === 1 && day > 14 && day <= 21) return true;
+            if (month === 9 && dayOfWeek === 1 && day > 14 && day <= 21) return true;
+            if (month === 10 && dayOfWeek === 1 && day > 7 && day <= 14) return true;
 
-            // 春分の日・秋分の日（簡易計算）
             if (month === 3 && day === Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4))) return true;
             if (month === 9 && day === Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4))) return true;
 
-            // 振替休日 (祝日が日曜の場合、次の平日)
             if (dayOfWeek === 1) {
                 const prevDay = new Date(date);
                 prevDay.setDate(day - 1);
@@ -481,13 +517,9 @@
         function isWeekendOrHoliday(dateStr) {
             const date = new Date(dateStr.replace(/\//g, '-'));
             const dayOfWeek = date.getDay();
-            if (dayOfWeek === 0 || dayOfWeek === 6) { // Sunday or Saturday
-                return true;
-            }
-            return isJapaneseHoliday(date);
+            return (dayOfWeek === 0 || dayOfWeek === 6) || isJapaneseHoliday(date);
         }
 
-        // --- 3Dシーン設定 ---
         function init() {
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0xf0f2f5);
@@ -495,7 +527,13 @@
 
             const container = document.getElementById('container');
             camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 1, 50000);
-            camera.position.set(0, 1800, 6000); // カメラ位置を調整
+            camera.position.set(0, 1800, 6000);
+
+            const aspect = container.clientWidth / container.clientHeight;
+            const frustumSize = graphSizeZ; 
+            orthoCamera = new THREE.OrthographicCamera(frustumSize * aspect / -2, frustumSize * aspect / 2, frustumSize / 2, frustumSize / -2, 1, 50000);
+            orthoCamera.position.y = 2000;
+            orthoCamera.lookAt(scene.position); // カメラが中心を向くように修正
 
             renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
             renderer.setSize(container.clientWidth, container.clientHeight);
@@ -523,53 +561,43 @@
             const vertices = [];
             const halfSizeX = sizeX / 2;
             const halfSizeZ = sizeZ / 2;
-            if (divisionsX > 0) {
-                for (let i = 0; i <= divisionsX; i++) {
-                    const x = (i / divisionsX) * sizeX - halfSizeX;
-                    vertices.push(x, 0, -halfSizeZ, x, 0, halfSizeZ);
-                }
-            }
-            if (divisionsZ > 0) {
-                for (let i = 0; i <= divisionsZ; i++) {
-                    const z = (i / divisionsZ) * sizeZ - halfSizeZ;
-                    vertices.push(-halfSizeX, 0, z, halfSizeX, 0, z);
-                }
-            }
+            if (divisionsX > 0) for (let i = 0; i <= divisionsX; i++) { const x = (i / divisionsX) * sizeX - halfSizeX; vertices.push(x, 0, -halfSizeZ, x, 0, halfSizeZ); }
+            if (divisionsZ > 0) for (let i = 0; i <= divisionsZ; i++) { const z = (i / divisionsZ) * sizeZ - halfSizeZ; vertices.push(-halfSizeX, 0, z, halfSizeX, 0, z); }
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-            const material = new THREE.LineBasicMaterial({ color: color });
-            return new THREE.LineSegments(geometry, material);
+            return new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: color }));
         }
 
         function updateGraph(data) {
-            while(graphGroup.children.length > 0){ 
-                graphGroup.remove(graphGroup.children[0]); 
-            }
-
-            const maxZ = processedData.length > 0 ? Math.max(...processedData.map(d => d.z)) : 20; // データがない場合はデフォルトで20
-            const displayMaxZ = Math.ceil(maxZ / 5) * 5; // 5の倍数に切り上げる
+            while(graphGroup.children.length > 0) { graphGroup.remove(graphGroup.children[0]); }
+            const is2DMode = document.getElementById('view-mode-toggle').checked;
             
-            const graphSizeX = 750 * 3; 
-            const graphSizeZ = 750 * 5; 
+            if (is2DMode) {
+                draw2DHeatmap(data);
+            } else {
+                draw3DBarGraph(data);
+            }
+        }
+
+        function draw3DBarGraph(data) {
+            const maxZ = processedData.length > 0 ? Math.max(...processedData.map(d => d.z)) : 20;
+            const displayMaxZ = Math.ceil(maxZ / 5) * 5;
             const graphHeight = 600; 
             const barWidth = 100;
 
-            // 主グリッド線 (Y軸は6分割=2000刻み)
             const mainGrid = createCustomGrid(graphSizeX, graphSizeZ, AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN, 6);
             mainGrid.position.y = -0.5;
             graphGroup.add(mainGrid);
 
-            // 副グリッド線 (Y軸のみ, 12分割=1000刻み)
             const subGrid = createCustomGrid(graphSizeX, graphSizeZ, 0, 12, 0xe0e0e0);
             subGrid.position.y = -0.5;
             graphGroup.add(subGrid);
 
-            // 補助目盛りを追加
-            createAuxiliaryTicks(graphSizeX, graphSizeZ);
+            createAuxiliaryTicks3D(graphSizeX, graphSizeZ);
 
             if (data.length === 0) {
                 showErrorMessage("表示するデータがありません");
-                createAxesAndTicks(maxZ, graphSizeX, graphSizeZ, graphHeight);
+                createAxesAndTicks3D(displayMaxZ, graphSizeX, graphSizeZ, graphHeight);
                 return;
             };
 
@@ -581,33 +609,15 @@
                 if (barHeight <= 0) return;
 
                 const geometry = new THREE.BoxGeometry(barWidth, barHeight, barWidth);
-                
-                const material = new THREE.MeshBasicMaterial({ 
-                    color: barColor,
-                    transparent: true,
-                    opacity: baseOpacity,
-                    depthWrite: false
-                });
-
+                const material = new THREE.MeshBasicMaterial({ color: barColor, transparent: true, opacity: baseOpacity, depthWrite: false });
                 const bar = new THREE.Mesh(geometry, material);
-
                 const posX = ((d.x - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * graphSizeX - graphSizeX / 2;
                 const posZ = ((d.y - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * graphSizeZ - graphSizeZ / 2;
                 bar.position.set(posX, barHeight / 2, posZ);
-                
-                bar.userData = { 
-                    x: d.x, y: d.y, z: d.z, dates: d.dates, 
-                    originalColor: barColor.clone(), 
-                    baseOpacity: baseOpacity 
-                };
+                bar.userData = { x: d.x, y: d.y, z: d.z, dates: d.dates, originalColor: barColor.clone(), baseOpacity: baseOpacity };
 
                 const edges = new THREE.EdgesGeometry(geometry);
-                const lineMaterial = new THREE.LineBasicMaterial({
-                    color: 0x000000,
-                    opacity: baseOpacity * 0.4, // 透明度と連動
-                    transparent: true,
-                    depthWrite: false
-                });
+                const lineMaterial = new THREE.LineBasicMaterial({ color: 0x000000, opacity: baseOpacity * 0.4, transparent: true, depthWrite: false });
                 const line = new THREE.LineSegments(edges, lineMaterial);
                 line.position.copy(bar.position);
                 line.userData.isOutline = true;
@@ -615,11 +625,52 @@
                 graphGroup.add(bar);
                 graphGroup.add(line);
             });
-            
-            createAxesAndTicks(displayMaxZ, graphSizeX, graphSizeZ, graphHeight);
+            createAxesAndTicks3D(displayMaxZ, graphSizeX, graphSizeZ, graphHeight);
         }
 
-        function createAxesAndTicks(displayMaxZ, sizeX, sizeZ, sizeY) {
+        function draw2DHeatmap(data) {
+            const maxZ = processedData.length > 0 ? Math.max(...processedData.map(d => d.z)) : 20;
+            const displayMaxZ = Math.ceil(maxZ / 5) * 5;
+            
+            const mainGrid = createCustomGrid(graphSizeX, graphSizeZ, AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN, 6);
+            graphGroup.add(mainGrid);
+            const subGrid = createCustomGrid(graphSizeX, graphSizeZ, 0, 12, 0xe0e0e0);
+            graphGroup.add(subGrid);
+
+            if (data.length === 0) {
+                showErrorMessage("表示するデータがありません");
+                createAxesAndTicks2D(graphSizeX, graphSizeZ);
+                return;
+            };
+            
+            const baseOpacity = parseFloat(document.getElementById('opacity-slider').value);
+            const maxRadius = 150;
+
+            data.forEach(d => {
+                const radius = Math.sqrt(d.z / displayMaxZ) * maxRadius;
+                if (radius <= 0) return;
+
+                const geometry = new THREE.CircleGeometry(radius, 32);
+                const color = getColorForValue(d.z, displayMaxZ);
+                const material = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: baseOpacity, depthWrite: false });
+                const circle = new THREE.Mesh(geometry, material);
+
+                const posX = ((d.x - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * graphSizeX - graphSizeX / 2;
+                const posZ = ((d.y - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * graphSizeZ - graphSizeZ / 2;
+                circle.position.set(posX, 0, posZ);
+                circle.rotation.x = -Math.PI / 2;
+                circle.userData = { x: d.x, y: d.y, z: d.z, dates: d.dates, originalColor: color.clone(), baseOpacity: baseOpacity };
+                graphGroup.add(circle);
+            });
+            createAxesAndTicks2D(graphSizeX, graphSizeZ);
+        }
+
+        function getColorForValue(value, maxValue) {
+            const h = (1.0 - Math.min(value, maxValue) / maxValue) * 0.7; // 0.7 (blue) to 0 (red)
+            return new THREE.Color().setHSL(h, 0.9, 0.5);
+        }
+
+        function createAxesAndTicks3D(displayMaxZ, sizeX, sizeZ, sizeY) {
             const tickColor = { r: 60, g: 60, b: 60, a: 1.0 };
             const axisLabelColor = { r: 0, g: 0, b: 0, a: 1.0 };
 
@@ -629,65 +680,96 @@
 
             for (let i = AXIS_CONFIG.X.MIN; i <= AXIS_CONFIG.X.MAX; i++) {
                 const xPos = ((i - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * sizeX - sizeX / 2;
-                const tickLabel = createTextSprite(i.toString(), {fontsize: 56, ...tickColor});
-                tickLabel.position.set(xPos, 0, sizeZ / 2 + 20); 
-                graphGroup.add(tickLabel);
+                const xTick = createTextSprite(i.toString(), {fontsize: 56, ...tickColor});
+                xTick.position.set(xPos, 0, sizeZ / 2 + 20);
+                graphGroup.add(xTick);
             }
 
             const yLabel = createTextSprite(AXIS_CONFIG.Y.LABEL, {fontsize: 36, ...axisLabelColor});
             yLabel.position.set(sizeX / 2 + 120, -50, 0);
             yLabel.rotation.y = -Math.PI / 2;
             graphGroup.add(yLabel);
-
             for (let i = 0; i <= 6; i++) {
                 const value = AXIS_CONFIG.Y.MIN + (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN) * (i / 6);
                 const zPos = ((value - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * sizeZ - sizeZ / 2;
                 const tickLabel = createTextSprite(Math.round(value).toString(), {fontsize: 56, ...tickColor});
-                const xOffset = sizeX / 2 + 20;
-                tickLabel.position.set(xOffset, 0, zPos);
+                tickLabel.position.set(sizeX / 2 + 20, 0, zPos);
                 tickLabel.rotation.y = -Math.PI / 2;
                 graphGroup.add(tickLabel);
             }
 
             graphGroup.add(createTextSprite(AXIS_CONFIG.Z.LABEL, {fontsize: 36, ...axisLabelColor}).translateY(sizeY + 50));
-            
             for (let value = 5; value <= displayMaxZ; value += 5) {
                 if (displayMaxZ > 0) {
                     const yPos = (value / displayMaxZ) * sizeY;
-                    const tickLabel = createTextSprite(value.toString(), {fontsize: 56, ...tickColor});
-                    tickLabel.position.set(-sizeX / 2 - 45, yPos, 0);
-                    graphGroup.add(tickLabel);
+                    const zTick = createTextSprite(value.toString(), {fontsize: 56, ...tickColor});
+                    zTick.position.set(-sizeX / 2 - 45, yPos, 0);
+                    graphGroup.add(zTick);
                 }
             }
         }
-
-        function createAuxiliaryTicks(sizeX, sizeZ) {
+        
+        function createAuxiliaryTicks3D(sizeX, sizeZ) {
             const tickValues = [2000, 4000, 6000, 8000, 10000];
             const xPositions = [1.5, 2.5, 3.5, 4.5];
-            const tickColor = { r: 150, g: 150, b: 150, a: 1.0 }; // グレー
-
+            const tickColor = { r: 150, g: 150, b: 150, a: 1.0 }; 
             xPositions.forEach(xVal => {
-                // X軸の値がグラフ範囲内にあるかチェック
                 if (xVal >= AXIS_CONFIG.X.MIN && xVal <= AXIS_CONFIG.X.MAX) {
                     tickValues.forEach(yVal => {
-                        // Y軸の値がグラフ範囲内にあるかチェック
                         if (yVal >= AXIS_CONFIG.Y.MIN && yVal <= AXIS_CONFIG.Y.MAX) {
                             const posX = ((xVal - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * sizeX - sizeX / 2;
                             const posZ = ((yVal - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * sizeZ - sizeZ / 2;
-
-                            const tickLabel = createTextSprite(yVal.toString(), { fontsize: 48, textColor: tickColor });
-                            tickLabel.position.set(posX, 0, posZ);
-                            graphGroup.add(tickLabel);
+                            const auxTick = createTextSprite(yVal.toString(), { fontsize: 48, textColor: tickColor });
+                            auxTick.position.set(posX, 0, posZ);
+                            graphGroup.add(auxTick);
                         }
                     });
                 }
             });
         }
 
+        function createAxesAndTicks2D(sizeX, sizeZ) {
+            const tickColor = { r: 60, g: 60, b: 60, a: 1.0 };
+            const axisLabelColor = { r: 0, g: 0, b: 0, a: 1.0 };
+            
+            const xLabel = createTextSprite(AXIS_CONFIG.X.LABEL, {fontsize: 36, ...axisLabelColor});
+            xLabel.position.set(0, 0, sizeZ / 2 + 100);
+            graphGroup.add(xLabel);
+            for (let i = AXIS_CONFIG.X.MIN; i <= AXIS_CONFIG.X.MAX; i++) {
+                const xPos = ((i - AXIS_CONFIG.X.MIN) / (AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN)) * sizeX - sizeX / 2;
+                const xTick = createTextSprite(i.toString(), {fontsize: 56, ...tickColor});
+                xTick.position.set(xPos, 0, sizeZ / 2 + 40);
+                graphGroup.add(xTick);
+            }
+
+            const yLabel = createTextSprite(AXIS_CONFIG.Y.LABEL, {fontsize: 36, ...axisLabelColor});
+            yLabel.position.set(sizeX / 2 + 120, 0, 0);
+            yLabel.rotation.y = -Math.PI / 2;
+            graphGroup.add(yLabel);
+            for (let i = 0; i <= 6; i++) {
+                const value = AXIS_CONFIG.Y.MIN + (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN) * (i / 6);
+                const zPos = ((value - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * sizeZ - sizeZ / 2;
+                const tickLabel = createTextSprite(Math.round(value).toString(), {fontsize: 56, ...tickColor});
+                tickLabel.position.set(sizeX / 2 + 40, 0, zPos);
+                tickLabel.rotation.y = -Math.PI / 2;
+                graphGroup.add(tickLabel);
+            }
+        }
+
         function onWindowResize() {
             const container = document.getElementById('container');
-            camera.aspect = container.clientWidth / container.clientHeight;
+            const aspect = container.clientWidth / container.clientHeight;
+            
+            camera.aspect = aspect;
             camera.updateProjectionMatrix();
+
+            const frustumSize = graphSizeZ; 
+            orthoCamera.left = frustumSize * aspect / -2;
+            orthoCamera.right = frustumSize * aspect / 2;
+            orthoCamera.top = frustumSize / 2;
+            orthoCamera.bottom = frustumSize / -2;
+            orthoCamera.updateProjectionMatrix();
+
             renderer.setSize(container.clientWidth, container.clientHeight);
         }
 
@@ -700,11 +782,17 @@
 
         function animate() {
             requestAnimationFrame(animate);
-            controls.update();
+            const is2DMode = document.getElementById('view-mode-toggle').checked;
             
-            const bars = graphGroup.children.filter(c => c.isMesh && c.geometry.type === 'BoxGeometry');
-            raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObjects(bars);
+            controls.enabled = !is2DMode;
+            if (!is2DMode) {
+                controls.update();
+            }
+            
+            const currentCamera = is2DMode ? orthoCamera : camera;
+            
+            raycaster.setFromCamera(mouse, currentCamera);
+            const intersects = raycaster.intersectObjects(graphGroup.children.filter(c => c.isMesh));
 
             if (intersects.length > 0) {
                 const newIntersected = intersects[0].object;
@@ -714,7 +802,7 @@
                         intersected.material.opacity = intersected.userData.baseOpacity;
                     }
                     intersected = newIntersected;
-                    intersected.material.color.set(0xff8c00); // Orange for hover
+                    intersected.material.color.set(0xff8c00);
                     intersected.material.opacity = 1.0;
 
                     const d = intersected.userData;
@@ -730,10 +818,10 @@
                 intersected = null;
                 tooltip.style.display = 'none';
             }
-
-            renderer.render(scene, camera);
+            renderer.render(scene, currentCamera);
         }
     </script>
 </body>
 </html>
+
 
