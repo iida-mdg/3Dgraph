@@ -37,53 +37,36 @@
         }
         #controls {
             position: absolute;
-            top: 20px;
-            left: 20px;
+            top: 15px;
+            left: 15px;
             background-color: rgba(255, 255, 255, 0.95);
-            padding: 15px;
+            padding: 12px;
             border-radius: 10px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.1);
             backdrop-filter: blur(8px);
-            max-width: 240px;
-            max-height: 90vh;
+            max-width: 220px;
+            max-height: 95vh;
             overflow-y: auto;
-        }
-        #controls h3 {
-            margin-top: 0;
-            margin-bottom: 10px;
-            font-size: 16px;
         }
         #controls label {
             display: block;
-            margin-bottom: 5px;
+            margin-bottom: 3px;
             font-size: 14px;
             font-weight: 700;
         }
-        #controls select, #controls input[type="date"], #controls button {
+        #controls select, #controls input {
             width: 100%;
             padding: 8px;
             border-radius: 5px;
             border: 1px solid #ccc;
-            margin-bottom: 15px;
+            margin-bottom: 12px;
             font-family: 'Noto Sans JP', sans-serif;
             font-size: 14px;
             box-sizing: border-box;
         }
-        #controls button {
-            background-color: #007bff;
-            color: white;
-            border: none;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-        #controls button:hover {
-            background-color: #0056b3;
-        }
-        #controls button.reset {
-            background-color: #6c757d;
-        }
-        #controls button.reset:hover {
-            background-color: #5a6268;
+        #controls input[type="range"] {
+            padding: 0;
+            margin-top: 5px;
         }
         #month-filter-container {
             max-height: 150px;
@@ -91,7 +74,7 @@
             border: 1px solid #ddd;
             padding: 10px;
             border-radius: 5px;
-            margin-bottom: 15px;
+            margin-bottom: 12px;
             background-color: #fff;
         }
         #month-filter-container div {
@@ -102,12 +85,12 @@
         #month-filter-container label {
             font-weight: 400;
             margin-left: 5px;
+            white-space: nowrap;
         }
     </style>
 </head>
 <body>
     <div id="controls">
-        <h3>フィルター</h3>
         <label for="job-filter">職種</label>
         <select id="job-filter"></select>
         <label for="area-filter">組区域</label>
@@ -115,12 +98,9 @@
 
         <label for="month-filter">月選択 (複数可)</label>
         <div id="month-filter-container"></div>
-
-        <label for="date-filter">日付選択</label>
-        <input type="date" id="date-filter">
         
-        <button id="apply-filter">適用</button>
-        <button id="reset-filter" class="reset">リセット</button>
+        <label for="opacity-slider">グラフ透明度</label>
+        <input type="range" id="opacity-slider" min="0.05" max="1.0" step="0.01" value="0.35">
     </div>
     <div id="container"></div>
     <div id="tooltip"></div>
@@ -135,7 +115,7 @@
         // --- Three.js グローバル変数 ---
         let scene, camera, renderer, controls;
         let raycaster, mouse;
-        let intersected;
+        let intersected = null;
         const tooltip = document.getElementById('tooltip');
         const graphGroup = new THREE.Group();
         let rawData = [];
@@ -183,6 +163,45 @@
         }
         const showLoadingMessage = (message) => showMessage(message);
         const showErrorMessage = (message) => showMessage(message);
+        
+        function refilterAndDrawGraph() {
+            const jobFilter = document.getElementById('job-filter');
+            const areaFilter = document.getElementById('area-filter');
+            const monthFilterContainer = document.getElementById('month-filter-container');
+            
+            const selectedJob = jobFilter.value;
+            const selectedArea = areaFilter.value;
+            const selectedMonths = Array.from(monthFilterContainer.querySelectorAll('input:checked')).map(cb => cb.value);
+
+            let filteredRaw = rawData.filter(d => 
+                (selectedJob === 'すべて' || d.job === selectedJob) &&
+                (selectedArea === 'すべて' || d.area === selectedArea)
+            );
+
+            if (selectedMonths.length > 0) {
+                filteredRaw = filteredRaw.filter(d => selectedMonths.includes(d.date.substring(0, 7)));
+            }
+            
+            const processed = processData(filteredRaw);
+            updateGraph(processed);
+        }
+
+        function updateOpacity() {
+            const opacitySlider = document.getElementById('opacity-slider');
+            const newOpacity = parseFloat(opacitySlider.value);
+
+            graphGroup.children.forEach(child => {
+                if (child.isMesh && child.geometry.type === 'BoxGeometry') {
+                    child.userData.baseOpacity = newOpacity;
+                    if (child !== intersected) {
+                        child.material.opacity = newOpacity;
+                    }
+                } else if (child.isLineSegments && child.userData.isOutline) {
+                    // 枠線の透明度も連動させる（本体より薄くする）
+                    child.material.opacity = newOpacity * 0.4;
+                }
+            });
+        }
 
         // --- 初期化 ---
         init();
@@ -196,8 +215,8 @@
                 if (!response.ok) {
                     throw new Error(`ネットワークエラー: ${response.status} ${response.statusText}`);
                 }
-                const tsvData = await response.text();
-                rawData = parseData(tsvData);
+                const csvData = await response.text();
+                rawData = parseData(csvData);
                 processedData = processData(rawData);
                 setupFiltersAndDisplayGraph();
             } catch (error) {
@@ -210,9 +229,7 @@
             const jobFilter = document.getElementById('job-filter');
             const areaFilter = document.getElementById('area-filter');
             const monthFilterContainer = document.getElementById('month-filter-container');
-            const dateFilter = document.getElementById('date-filter');
-            const applyButton = document.getElementById('apply-filter');
-            const resetButton = document.getElementById('reset-filter');
+            const opacitySlider = document.getElementById('opacity-slider');
             
             jobFilter.innerHTML = '';
             areaFilter.innerHTML = '';
@@ -220,7 +237,6 @@
 
             const uniqueJobs = ['すべて', ...new Set(rawData.map(d => d.job))];
             const uniqueAreas = ['すべて', ...new Set(rawData.map(d => d.area))];
-            
             const uniqueMonths = [...new Set(rawData.map(d => d.date.substring(0, 7)))].sort();
 
             uniqueJobs.forEach(job => {
@@ -238,56 +254,33 @@
             });
 
             uniqueMonths.forEach(month => {
+                const [year, monthNum] = month.split('/');
+                const labelText = `${year}年${parseInt(monthNum, 10)}月`;
                 const div = document.createElement('div');
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.id = `month-${month}`;
                 checkbox.value = month;
+                checkbox.addEventListener('change', refilterAndDrawGraph);
                 const label = document.createElement('label');
                 label.htmlFor = `month-${month}`;
-                label.textContent = month;
+                label.textContent = labelText;
                 div.appendChild(checkbox);
                 div.appendChild(label);
                 monthFilterContainer.appendChild(div);
             });
             
-            applyButton.onclick = () => {
-                const selectedJob = jobFilter.value;
-                const selectedArea = areaFilter.value;
-                
-                const selectedMonths = Array.from(monthFilterContainer.querySelectorAll('input:checked')).map(cb => cb.value);
-                const selectedDate = dateFilter.value ? dateFilter.value.replace(/-/g, '/') : '';
+            jobFilter.addEventListener('change', refilterAndDrawGraph);
+            areaFilter.addEventListener('change', refilterAndDrawGraph);
+            opacitySlider.addEventListener('input', updateOpacity);
 
-                let filteredRaw = rawData.filter(d => 
-                    (selectedJob === 'すべて' || d.job === selectedJob) &&
-                    (selectedArea === 'すべて' || d.area === selectedArea)
-                );
-
-                if (selectedDate) {
-                    filteredRaw = filteredRaw.filter(d => d.date === selectedDate);
-                } else if (selectedMonths.length > 0) {
-                    filteredRaw = filteredRaw.filter(d => selectedMonths.includes(d.date.substring(0, 7)));
-                }
-                
-                const processed = processData(filteredRaw);
-                updateGraph(processed);
-            };
-
-            resetButton.onclick = () => {
-                jobFilter.value = 'すべて';
-                areaFilter.value = 'すべて';
-                dateFilter.value = '';
-                monthFilterContainer.querySelectorAll('input:checked').forEach(cb => cb.checked = false);
-                applyButton.click();
-            };
-            
-            applyButton.click();
+            refilterAndDrawGraph();
         }
 
         // --- データ処理 ---
         function parseData(dataStr) {
             const lines = dataStr.trim().split(/\r?\n/);
-            const header = lines[0].split('\t');
+            const header = lines[0].split(',');
             
             const requiredColumns = ['日時', '数値', '組区域', '職種', '人数推計'];
             const indices = {};
@@ -298,7 +291,7 @@
             });
 
             return lines.slice(1).map(line => {
-                const parts = line.split('\t');
+                const parts = line.split(',');
                 if (parts.length < header.length) return null;
                 const dateStr = parts[indices['日時']].split(' ')[0];
                 return {
@@ -331,8 +324,8 @@
             scene.add(graphGroup);
 
             const container = document.getElementById('container');
-            camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 1, 30000);
-            camera.position.set(1200, 900, 2500);
+            camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 1, 50000);
+            camera.position.set(0, 1800, 6000); // カメラ位置を調整
 
             renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
             renderer.setSize(container.clientWidth, container.clientHeight);
@@ -351,7 +344,7 @@
 
             raycaster = new THREE.Raycaster();
             mouse = new THREE.Vector2();
-
+            
             window.addEventListener('resize', onWindowResize, false);
             document.addEventListener('mousemove', onMouseMove, false);
         }
@@ -381,10 +374,10 @@
 
             const maxZ = processedData.length > 0 ? Math.max(...processedData.map(d => d.z)) : 1;
             
-            const graphSizeX = 750;
-            const graphSizeZ = 1250;
-            const graphHeight = 300;
-            const barWidth = 40;
+            const graphSizeX = 750 * 2; // X軸の間隔を2倍に
+            const graphSizeZ = 750 * 3; // X:Yが1:3になるように
+            const graphHeight = 600; // グラフの高さを上げる
+            const barWidth = 100; // 棒グラフの底面を小さくする
 
             const customGrid = createCustomGrid(graphSizeX, graphSizeZ, AXIS_CONFIG.X.MAX - AXIS_CONFIG.X.MIN, 10);
             customGrid.position.y = -0.5;
@@ -396,16 +389,18 @@
                 return;
             };
 
+            const baseOpacity = parseFloat(document.getElementById('opacity-slider').value);
             const barColor = new THREE.Color(0x0077b6);
 
             data.forEach(d => {
                 const barHeight = (d.z / maxZ) * graphHeight;
+                if (barHeight <= 0) return;
+
                 const geometry = new THREE.BoxGeometry(barWidth, barHeight, barWidth);
-                
                 const material = new THREE.MeshLambertMaterial({ 
                     color: barColor,
                     transparent: true,
-                    opacity: 0.35,
+                    opacity: baseOpacity,
                     depthWrite: false
                 });
                 const bar = new THREE.Mesh(geometry, material);
@@ -414,12 +409,23 @@
                 const posZ = ((d.y - AXIS_CONFIG.Y.MIN) / (AXIS_CONFIG.Y.MAX - AXIS_CONFIG.Y.MIN)) * graphSizeZ - graphSizeZ / 2;
                 bar.position.set(posX, barHeight / 2, posZ);
                 
-                bar.userData = { x: d.x, y: d.y, z: d.z, originalColor: barColor.clone(), dates: d.dates };
+                bar.userData = { 
+                    x: d.x, y: d.y, z: d.z, dates: d.dates, 
+                    originalColor: barColor.clone(), 
+                    baseOpacity: baseOpacity 
+                };
 
                 const edges = new THREE.EdgesGeometry(geometry);
-                const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000, opacity: 0.1, transparent: true }));
+                const lineMaterial = new THREE.LineBasicMaterial({
+                    color: 0x000000,
+                    opacity: baseOpacity * 0.4, // 透明度と連動
+                    transparent: true,
+                    depthWrite: false
+                });
+                const line = new THREE.LineSegments(edges, lineMaterial);
                 line.position.copy(bar.position);
-                
+                line.userData.isOutline = true;
+
                 graphGroup.add(bar);
                 graphGroup.add(line);
             });
@@ -462,7 +468,7 @@
             const tickCount = 4;
             for (let i = 0; i <= tickCount; i++) {
                 const value = Math.round((maxZ / tickCount) * i);
-                if (generatedLabels.has(value) || value === 0) continue;
+                if (generatedLabels.has(value) || value === 0 && maxZ > 0) continue;
                 generatedLabels.add(value);
                 
                 if (maxZ > 0) {
@@ -490,24 +496,23 @@
 
         function animate() {
             requestAnimationFrame(animate);
+            controls.update();
+            
             const bars = graphGroup.children.filter(c => c.isMesh && c.geometry.type === 'BoxGeometry');
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObjects(bars);
 
             if (intersects.length > 0) {
-                if (intersected !== intersects[0].object) {
+                const newIntersected = intersects[0].object;
+                if (intersected !== newIntersected) {
                     if (intersected) {
-                        intersected.renderOrder = 0;
                         intersected.material.color.set(intersected.userData.originalColor);
-                        intersected.material.opacity = 0.35;
-                        intersected.material.depthWrite = false; 
+                        intersected.material.opacity = intersected.userData.baseOpacity;
                     }
-                    intersected = intersects[0].object;
-                    intersected.renderOrder = 1; 
+                    intersected = newIntersected;
                     intersected.material.color.set(0xff8c00); // Orange for hover
                     intersected.material.opacity = 1.0;
-                    intersected.material.depthWrite = true; 
-                    
+
                     const d = intersected.userData;
                     const datesString = d.dates.slice(0, 10).join('\n') + (d.dates.length > 10 ? '\n...' : '');
                     tooltip.style.display = 'block';
@@ -515,18 +520,16 @@
                 }
             } else {
                 if (intersected) {
-                    intersected.renderOrder = 0;
                     intersected.material.color.set(intersected.userData.originalColor);
-                    intersected.material.opacity = 0.35;
-                    intersected.material.depthWrite = false; 
+                    intersected.material.opacity = intersected.userData.baseOpacity;
                 }
                 intersected = null;
                 tooltip.style.display = 'none';
             }
 
-            controls.update();
             renderer.render(scene, camera);
         }
     </script>
 </body>
 </html>
+
